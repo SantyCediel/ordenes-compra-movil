@@ -8,6 +8,9 @@ const GRAPH = "https://graph.microsoft.com/v1.0";
 const DEMO = new URLSearchParams(location.search).has("demo");
 // dentro de la aplicación del computador: los datos vienen del disco y los PDF los abre Windows
 const LOCAL = new URLSearchParams(location.search).has("local");
+// solo el mapa, dentro del Inicio de la aplicación del computador
+const INCRUSTADO = new URLSearchParams(location.search).has("incrustado");
+if (INCRUSTADO) document.documentElement.classList.add("incrustado");
 const escritorio = m => { try { window.chrome?.webview?.postMessage(m); return !!window.chrome?.webview; } catch { return false; } };
 const $ = s => document.querySelector(s);
 const vista = $("#vista");
@@ -299,9 +302,11 @@ function inicio() {
       <a class="cifra tarjeta" href="#/entregas"><div class="ico t-rojo">${ICO.alerta}</div><b data-n="${venc.length}">0</b><span>Entregas vencidas</span><small>sin llegada · ${esc(corto(venc.reduce((s, o) => s + (o.cop || 0), 0)))}</small></a>
       <a class="cifra tarjeta" href="#/ordenes/mes"><div class="ico t-verde">${ICO.mes}</div><b data-n="${delMes.length}">0</b><span>Órdenes del mes</span><small>${esc(corto(delMes.reduce((s, o) => s + (o.cop || 0), 0)))}</small></a>
     </div>
+    <h2>¿Dónde se entrega? <small class="h2-nota">últimos 12 meses</small></h2>${tarjetaMapa()}
     ${instalable()}
     <h2>Recientes</h2><div class="lista">${D.ordenes.slice(0, 8).map(fila).join("")}</div></div>`;
   vista.querySelectorAll("[data-n]").forEach(contar);
+  { const R = rango("12m"); pintarMapa(D.ordenes.filter(o => o.f && o.f >= R.desde && o.f <= R.hasta), R); }
   if ($("#novCerrar")) $("#novCerrar").onclick = () => { NOVEDADES = null; $(".novedades")?.remove(); };
 }
 
@@ -830,7 +835,7 @@ async function pintarMapa(sel, R) {
   let mes = null, elegido = null;
 
   // encuadre: todos los puntos del periodo con margen y la proporción de la caja
-  const ancho = caja.clientWidth || 360, alto = Math.round(Math.min(480, Math.max(320, ancho * 1.08)));
+  const ancho = caja.clientWidth || 360, alto = INCRUSTADO ? Math.max(300, Math.min(420, window.innerHeight - 96)) : Math.round(Math.min(480, Math.max(320, ancho * 1.08)));
   let x0 = Math.min(...todos.map(p => p.x)), x1 = Math.max(...todos.map(p => p.x)), y0 = Math.min(...todos.map(p => p.y)), y1 = Math.max(...todos.map(p => p.y));
   const margen = 80; x0 -= margen; x1 += margen; y0 -= margen; y1 += margen;
   let w = Math.max(260, x1 - x0), h = Math.max(260, y1 - y0);
@@ -1270,7 +1275,7 @@ async function vistaPrevia(o) {
 }
 
 async function abrirPdf(o) {
-  if (LOCAL) { if (!escritorio({ tipo: "pdf", a: o.a })) aviso("No se pudo abrir el PDF"); return; }
+  if (LOCAL) { if (!escritorio({ tipo: "pdf", a: o.a, n: o.n })) aviso("No se pudo abrir el PDF"); return; }
   if (DEMO || !cuenta) { aviso("Entra con tu cuenta para abrir el PDF"); return; }
   try {
     const it = await graph(enDrive((D.raizOneDrive ? D.raizOneDrive + "/" : "") + o.a) + "?$select=webUrl");
@@ -1287,7 +1292,14 @@ function cerrarHoja(sinAnimar) {
 }
 
 // ---------------------------------------------------------------- navegación
-const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes, lugares, articulo, presentar };
+// el mapa solo (12 meses), para incrustarlo: a la izquierda el mapa y su línea de tiempo; a la derecha el detalle y la lista
+function mapa() {
+  const R = rango("12m"), sel = D.ordenes.filter(o => o.f && o.f >= R.desde && o.f <= R.hasta);
+  vista.innerHTML = `<div class="mapa-solo"><div class="ms-izq"><div class="tarjeta mapa-caja" id="mapaCaja"><div class="esq" style="height:340px"></div></div><div class="tarjeta linea-tiempo" id="mapaTiempo" hidden></div></div>
+    <div class="ms-der"><div id="mapaSel"></div><div class="tarjeta bloque" id="mapaLista"></div><a class="ver-mas tarjeta enlace-lugares" id="enlaceLugares" href="#/lugares" hidden></a></div></div>`;
+  pintarMapa(sel, R);
+}
+const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes, lugares, articulo, presentar, mapa };
 const PESTANAS = ["inicio", "ordenes", "tablero", "seguimiento", "entregas"];
 const reducido = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const vibrar = (ms = 8) => { try { navigator.vibrate?.(ms); } catch { } };
@@ -1325,6 +1337,8 @@ function alCambiar() {
   const h = location.hash.replace(/^#/, "").replace(/^[/]/, "");
   if (/^(code|error|state)=/.test(h)) return;
   const [p, arg] = h.split("/");
+  // incrustado: cualquier otro destino se abre en la vista Análisis de la aplicación del computador
+  if (INCRUSTADO && dibujado && p !== "mapa") { escritorio({ tipo: "ir", hash: "#/" + h }); history.replaceState(null, "", location.pathname + location.search + "#/mapa"); return; }
   if (p === "orden") {
     if (!dibujado) { actual = "ordenes"; dibujar(); }
     if (D) abrirOrden(decodeURIComponent(arg || ""));
