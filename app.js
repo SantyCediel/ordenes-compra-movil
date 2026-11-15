@@ -178,6 +178,7 @@ async function sincronizar(manual) {
     if (guardado && guardado.etag === meta.eTag && D) { if (manual) aviso("Ya tienes lo último"); return; }
     const r = await fetch(meta["@microsoft.graph.downloadUrl"]);
     poner(await r.json(), meta.eTag);
+    revisarNovedades();
     dibujar();
     if (manual) aviso("Actualizado");
   } catch (e) {
@@ -210,6 +211,8 @@ const ICO = {
   compartir: '<svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
   flecha: '<svg class="flecha" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
   mapaFit: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+  play: '<svg viewBox="0 0 24 24"><path d="M8 5.5v13l11-6.5z" fill="currentColor"/></svg>',
+  pausa: '<svg viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke-width="3"/></svg>',
   pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
 };
 
@@ -279,6 +282,7 @@ function inicio() {
       ${lineaPortada(sumas, meses)}
       <div class="p-pies"><div><b>${fmtNum.format(delMes.length)}</b><small>órdenes</small></div><div><b>${fmtNum.format(provMes)}</b><small>proveedores</small></div><div><b>${esc(corto(delMes.length ? totMes / delMes.length : 0))}</b><small>promedio</small></div></div>
     </a>
+    ${tarjetaNovedades()}
     <h2>Atención</h2>${atencion()}
     <h2>Resumen</h2>
     <div class="cifras">
@@ -290,6 +294,7 @@ function inicio() {
     ${instalable()}
     <h2>Recientes</h2><div class="lista">${D.ordenes.slice(0, 8).map(fila).join("")}</div></div>`;
   vista.querySelectorAll("[data-n]").forEach(contar);
+  if ($("#novCerrar")) $("#novCerrar").onclick = () => { NOVEDADES = null; $(".novedades")?.remove(); };
 }
 
 function instalable() {
@@ -311,12 +316,12 @@ const PRUEBA = {
 
 // faceta: viene del tablero o del detalle (todas las órdenes de un proveedor, cliente o tipo)
 let faceta = null, ordenLista = "recientes";
-const FACETAS = { p: "Proveedor", c: "Cliente", tc: "Tipo de compra", mu: "Municipio" };
+const FACETAS = { p: "Proveedor", c: "Cliente", tc: "Tipo de compra", mu: "Municipio", f: "Fecha" };
 const ORDENES_POR = [["recientes", "Más recientes"], ["valor", "Mayor valor"], ["entrega", "Entrega más próxima"]];
 
 function ordenes(arg) {
   if (arg) {
-    const m = /^(p|c|tc|mu|q):(.*)$/.exec(arg);
+    const m = /^(p|c|tc|mu|f|q):(.*)$/.exec(arg);
     if (m) {
       const v = decodeURIComponent(m[2]);
       if (m[1] === "q") { texto = v; faceta = null; } else { faceta = { k: m[1], v }; texto = ""; }
@@ -328,7 +333,7 @@ function ordenes(arg) {
     asegurarLugares().then(() => { if (actual === "ordenes") ordenes(); });
     return;
   }
-  const valorFaceta = faceta && (faceta.k === "mu" ? nombreMuni(faceta.v) + " · " + deptoMuni(faceta.v) : faceta.v);
+  const valorFaceta = faceta && (faceta.k === "mu" ? nombreMuni(faceta.v) + " · " + deptoMuni(faceta.v) : faceta.k === "f" ? fecha(faceta.v) : faceta.v);
   vista.innerHTML = `<div class="entra"><h1>Órdenes</h1>
     <div class="buscar"><div class="caja tarjeta">${ICO.buscar}<input id="q" type="search" placeholder="Número, proveedor, municipio o artículo" value="${esc(texto)}" autocomplete="off" enterkeyhint="search"></div>
     <div class="filtros">${FILTROS.map(([k, t]) => `<button data-f="${k}" class="${k === filtro ? "si" : ""}">${t}</button>`).join("")}</div>
@@ -476,9 +481,9 @@ function articulos(lista) {
   for (const o of lista) {
     const tasa = o.v ? (o.cop || 0) / o.v : 1;
     for (const a of o.it || []) {
-      const k = String(a[1] || "").trim(); if (!k) continue;
-      const g = m.get(k) || { k, v: 0, n: 0, q: 0, u: a[3] };
-      g.v += (a[6] || 0) * tasa; g.n++; g.q += a[4] || 0; m.set(k, g);
+      const clave = claveArt(a); if (!clave) continue;
+      const g = m.get(clave) || { k: String(a[1] || "").trim() + (a[2] ? " " + a[2] : ""), clave, v: 0, n: 0, q: 0, u: a[3] };
+      g.v += (a[6] || 0) * tasa; g.n++; g.q += a[4] || 0; m.set(clave, g);
     }
   }
   return [...m.values()].sort((a, b) => b.v - a.v);
@@ -530,7 +535,7 @@ function activarGrafico(cub, tipo, sumas, cuentas) {
 function ranking(grupos, campo, cuantos, sub) {
   if (!grupos.length) return `<div class="vacio" style="padding:24px">Sin órdenes en este periodo.</div>`;
   const max = grupos[0].v || 1, top = grupos.slice(0, cuantos), resto = grupos.slice(cuantos);
-  return top.map(g => `<a class="rank" href="#/ordenes/${campo}:${encodeURIComponent(g.k)}"><div class="r1"><span>${esc(g.k)}</span><b>${esc(corto(g.v))}</b></div>
+  return top.map(g => `<a class="rank" href="${campo === "art" ? "#/articulo/" + encodeURIComponent(g.clave) : `#/ordenes/${campo}:${encodeURIComponent(g.k)}`}"><div class="r1"><span>${esc(g.k)}</span><b>${esc(corto(g.v))}</b></div>
       <div class="r2"><i style="width:${Math.max(0.8, g.v / max * 100)}%"></i></div><small>${esc(sub(g))}</small></a>`).join("") +
     (resto.length ? `<div class="rank resto"><div class="r1"><span>Otros ${fmtNum.format(resto.length)}</span><b>${esc(corto(resto.reduce((s, g) => s + g.v, 0)))}</b></div></div>` : "");
 }
@@ -561,7 +566,7 @@ function tablero(arg, sinAnimar) {
   for (const o of sel) { const i = pos.get(claveDe(o.f, R.cubeta)); if (i != null) { sumas[i] += o.cop || 0; cuentas[i]++; } }
   const tot = suma(sel), n = sel.length;
   const fmtN = v => fmtNum.format(Math.round(v));
-  vista.innerHTML = `<div class="${sinAnimar ? "" : "entra"}"><h1>Tablero</h1>
+  vista.innerHTML = `<div class="${sinAnimar ? "" : "entra"}"><div class="h1-fila"><h1>Tablero</h1><a class="boton" href="#/presentar">${ICO.play}Presentar</a></div>
     <div class="filtros periodos">${PERIODOS.map(([k, t]) => `<button data-per="${k}" class="${k === periodo ? "si" : ""}">${t}</button>`).join("")}</div>
     <p class="sub rango">${esc(fecha(R.desde))} – ${esc(fecha(R.hasta))}${R.antes ? " · comparado con el mismo periodo del año pasado" : ""}</p>
     <div class="kpis">
@@ -571,17 +576,182 @@ function tablero(arg, sinAnimar) {
       ${kpi("Proveedores", provs(sel), ant && provs(ant), fmtN)}
     </div>
     <h2>Compras en el tiempo</h2>${grafico(cub, R.cubeta, sumas, cuentas)}
+    <h2>Calendario de compras</h2>${calendario(sel, R)}
     <h2>¿Dónde se entrega?</h2>${tarjetaMapa()}
     <h2>Por cliente</h2><div class="tarjeta bloque">${partes(agrupar(sel, o => o.c))}</div>
     <h2>Proveedores principales</h2><div class="tarjeta bloque">${ranking(agrupar(sel, o => o.p), "p", 8, g => plural(g.n, "orden", "órdenes"))}</div>
     <h2>Tipo de compra</h2><div class="tarjeta bloque">${ranking(agrupar(sel, o => o.tc), "tc", 6, g => plural(g.n, "orden", "órdenes"))}</div>
-    <h2>Artículos más comprados</h2><div class="tarjeta bloque">${ranking(articulos(sel), "q", 8, g => `${fmtNum.format(g.q)} ${g.u || "und"} · en ${plural(g.n, "orden", "órdenes")}`)}</div>
+    <h2>Precios que subieron</h2><div class="tarjeta bloque">${preciosQueSubieron(sel)}</div>
+    <h2>Artículos más comprados</h2><div class="tarjeta bloque">${ranking(articulos(sel), "art", 8, g => `${fmtNum.format(g.q)} ${g.u || "und"} · en ${plural(g.n, "orden", "órdenes")}`)}</div>
     <p class="nota">Valores en pesos, con impuestos (los artículos, antes de impuestos). Las órdenes en dólares o euros van convertidas. Toca un cliente, proveedor o artículo para ver sus órdenes.</p></div>`;
   vista.querySelectorAll("[data-per]").forEach(b => b.onclick = () => {
     periodo = b.dataset.per; pref("periodo", periodo); tablero(null, true);
   });
   activarGrafico(cub, R.cubeta, sumas, cuentas);
-  pintarMapa(sel);
+  activarCalendario(sel);
+  pintarMapa(sel, R);
+}
+
+// ---------------------------------------------------------------- calendario: cuánto se compró cada día
+// Una celda por día (semanas en columnas); el tono sube con lo comprado (5 niveles de un solo azul, por quintiles).
+function calendario(sel, R) {
+  const fin = aFecha(R.hasta), tope = new Date(fin); tope.setDate(tope.getDate() - 7 * 52 + 1);
+  let ini = aFecha(R.desde); const recortado = ini < tope; if (recortado) ini = tope;
+  lunes(ini);
+  const desde = isoDe(ini), porDia = new Map();
+  for (const o of sel) { if (!o.f || o.f < desde) continue; const g = porDia.get(o.f) || { v: 0, n: 0 }; g.v += o.cop || 0; g.n++; porDia.set(o.f, g); }
+  const vals = [...porDia.values()].map(g => g.v).sort((a, b) => a - b);
+  const q = p => vals[Math.min(vals.length - 1, Math.floor(p * vals.length))] ?? 0, cortes = [q(0.2), q(0.4), q(0.6), q(0.8)];
+  const nivel = v => (!v ? 0 : 1 + cortes.filter(c => v > c).length);
+  const celdas = [], meses = [], hoy = hoyIso();
+  let semana = 0, mesAnt = "";
+  for (const d = new Date(ini); d <= fin || d.getDay() !== 1; d.setDate(d.getDate() + 1)) {
+    const iso = isoDe(d), dia = (d.getDay() + 6) % 7;
+    if (dia === 0 && iso !== desde) semana++;
+    if (dia === 0 && iso.slice(0, 7) !== mesAnt) { mesAnt = iso.slice(0, 7); meses.push([semana, fmtMes.format(d).replace(".", "")]); }
+    if (d > fin) { celdas.push(`<i class="d fuera"></i>`); continue; }
+    const g = porDia.get(iso);
+    celdas.push(`<button class="d n${nivel(g?.v)}${iso === hoy ? " hoy" : ""}" data-f="${iso}" aria-label="${esc(fecha(iso))}: ${g ? esc(corto(g.v)) + ", " + plural(g.n, "orden", "órdenes") : "sin compras"}"></button>`);
+  }
+  const dias = porDia.size, activo = [...porDia].sort((a, b) => b[1].v - a[1].v)[0];
+  return `<div class="tarjeta calendario">
+    <div class="lectura"><small id="calEtq">${recortado ? "Últimas 52 semanas" : "Todo el periodo"}</small><b id="calVal">${plural(dias, "día con compras", "días con compras")}</b>
+      <small id="calSub">${activo ? "el más fuerte: " + esc(fechaCorta(activo[0])) + " · " + esc(corto(activo[1].v)) : ""}</small></div>
+    <div class="cal-marco" id="calMarco"><div class="cal-meses" style="--sem:${semana + 1}">${meses.map(([s, m]) => `<span style="grid-column:${s + 1}">${esc(m)}</span>`).join("")}</div>
+      <div class="cal-cuerpo"><div class="cal-dias"><span>L</span><span></span><span>M</span><span></span><span>V</span><span></span><span>D</span></div>
+      <div class="cal" style="--sem:${semana + 1}">${celdas.join("")}</div></div></div>
+    <div class="cal-pie"><a id="calVer" class="enlace" hidden></a><span class="cal-ley">Menos <i class="d n0"></i><i class="d n1"></i><i class="d n2"></i><i class="d n3"></i><i class="d n4"></i><i class="d n5"></i> Más</span></div></div>`;
+}
+function activarCalendario(sel) {
+  const marco = $("#calMarco"); if (!marco) return;
+  marco.scrollLeft = marco.scrollWidth; // lo más reciente a la vista
+  const porDia = new Map(); for (const o of sel) { if (!o.f) continue; const g = porDia.get(o.f) || { v: 0, n: 0 }; g.v += o.cop || 0; g.n++; porDia.set(o.f, g); }
+  marco.addEventListener("click", e => {
+    const b = e.target.closest("button.d"); if (!b) return;
+    marco.querySelectorAll(".d.si").forEach(x => x.classList.remove("si")); b.classList.add("si");
+    const g = porDia.get(b.dataset.f), ver = $("#calVer");
+    $("#calEtq").textContent = fmtDia.format(aFecha(b.dataset.f));
+    $("#calVal").textContent = g ? corto(g.v) : "Sin compras";
+    $("#calSub").textContent = g ? plural(g.n, "orden", "órdenes") : "";
+    ver.hidden = !g; ver.href = "#/ordenes/f:" + b.dataset.f; ver.textContent = "Ver las órdenes de ese día";
+  });
+}
+
+// ---------------------------------------------------------------- precios: historial por artículo
+// El código del PDF no identifica el artículo (es una categoría + un consecutivo): se usa la descripción y su
+// complemento (p. ej. la medida). Los servicios y los saltos de más de 5 veces (cambio de unidad o de empaque)
+// no se comparan.
+let PRECIOS = null;
+const claveArt = a => normal(String(a[1] || "") + " " + String(a[2] || "")).replace(/[^a-z0-9]+/g, " ").trim();
+const esServicio = d => /^\s*servicio/i.test(String(d || ""));
+const comparable = (a, b) => { const r = a / b; return r > 0.2 && r < 5; };
+function precios() {
+  if (PRECIOS?.d === D) return PRECIOS.m;
+  const m = new Map();
+  for (const o of D.ordenes) {
+    const tasa = o.v ? (o.cop || 0) / o.v : 1;
+    for (const a of o.it || []) {
+      if (!(a[4] > 0) || !(a[5] > 0)) continue;
+      const k = claveArt(a); if (!k) continue;
+      const l = m.get(k) || []; l.push({ o, a, pu: a[5] * tasa, q: a[4] }); m.set(k, l);
+    }
+  }
+  for (const l of m.values()) l.sort((x, y) => (x.o.f || "").localeCompare(y.o.f || "") || String(x.o.n).localeCompare(String(y.o.n)));
+  PRECIOS = { d: D, m }; return m;
+}
+// la compra anterior del mismo artículo (en otra orden) y cuánto cambió el precio unitario
+function cambioPrecio(o, a) {
+  if (esServicio(a[1])) return null;
+  const l = precios().get(claveArt(a)); if (!l || l.length < 2) return null;
+  const i = l.findIndex(x => x.a === a); if (i <= 0) return null;
+  const ant = l.slice(0, i).reverse().find(x => x.o !== o); if (!ant) return null;
+  if (!comparable(l[i].pu, ant.pu)) return null;
+  return { pct: Math.round((l[i].pu / ant.pu - 1) * 100), ant, l };
+}
+function etiquetaPrecio(o, a) {
+  const l = precios().get(claveArt(a)); if (!l || l.length < 2) return "";
+  const enlace = "#/articulo/" + encodeURIComponent(claveArt(a)), cp = cambioPrecio(o, a);
+  if (cp && Math.abs(cp.pct) >= 1) return `<a class="precio ${cp.pct > 0 ? "sube" : "baja"}" href="${enlace}">${cp.pct > 0 ? "▲" : "▼"} ${Math.abs(cp.pct)}% vs. ${esc(fechaCorta(cp.ant.o.f))}</a>`;
+  return `<a class="precio" href="${enlace}">${cp ? "= mismo precio · " : ""}Historial (${l.length})</a>`;
+}
+
+// en el tablero: lo que más subió de precio en el periodo, por el dinero de más que costó
+function preciosQueSubieron(sel) {
+  const enSel = new Set(sel), cambios = [];
+  for (const [k, l] of precios()) {
+    if (l.length < 2 || esServicio(l[0].a[1])) continue;
+    let i = -1; for (let j = l.length - 1; j >= 0; j--) if (enSel.has(l[j].o)) { i = j; break; }
+    if (i <= 0) continue;
+    const ult = l[i], ant = l.slice(0, i).reverse().find(x => x.o !== ult.o);
+    if (!ant || !comparable(ult.pu, ant.pu)) continue;
+    const pct = (ult.pu / ant.pu - 1) * 100;
+    cambios.push({ k, ult, ant, pct, impacto: (ult.pu - ant.pu) * ult.q });
+  }
+  const suben = cambios.filter(c => c.pct >= 5).sort((a, b) => b.impacto - a.impacto), bajan = cambios.filter(c => c.pct <= -5);
+  const extra = suben.reduce((s, c) => s + c.impacto, 0);
+  if (!cambios.length) return `<div class="vacio" style="padding:24px">No hay artículos con compras anteriores para comparar en este periodo.</div>`;
+  return `<div class="precios-resumen"><div><b class="c-rojo">▲ ${fmtNum.format(suben.length)}</b><small>subieron 5 % o más</small></div><div><b class="c-verde">▼ ${fmtNum.format(bajan.length)}</b><small>bajaron 5 % o más</small></div><div><b>${esc(corto(extra))}</b><small>de más por las subidas</small></div></div>` +
+    suben.slice(0, 6).map(c => `<a class="rank" href="#/articulo/${encodeURIComponent(c.k)}"><div class="r1"><span>${esc(c.ult.a[1])}</span><b class="c-rojo">▲ ${Math.round(c.pct)}%</b></div>
+      <small>${esc(dinero(c.ant.pu))} → ${esc(dinero(c.ult.pu))} · ${esc(c.ult.o.p)}</small></a>`).join("");
+}
+
+// pantalla de un artículo: su precio en el tiempo, por proveedor y cada compra
+function articulo(arg) {
+  const k = decodeURIComponent(arg || ""), l = precios().get(k);
+  if (!l) { vista.innerHTML = `<div class="vacio entra"><div class="ilus">${ICO.buscar}</div><b>No encontré ese artículo</b><p><a class="boton" href="#/tablero">Ir al tablero</a></p></div>`; return; }
+  const a0 = l[l.length - 1].a, pus = l.map(x => x.pu), ult = l[l.length - 1], pri = l[0];
+  const servicio = esServicio(a0[1]), varia = !servicio && comparable(ult.pu, pri.pu) ? Math.round((ult.pu / pri.pu - 1) * 100) : null;
+  const provs = new Map();
+  for (const x of l) { const g = provs.get(x.o.p) || { p: x.o.p, s: 0, q: 0, n: 0, ult: x }; g.s += x.pu * x.q; g.q += x.q; g.n++; g.ult = x; provs.set(x.o.p, g); }
+  const lp = [...provs.values()].map(g => ({ ...g, prom: g.s / g.q })).sort((a, b) => a.prom - b.prom);
+  vista.innerHTML = `<div class="entra">
+    <button class="volver" id="btnVolver">${ICO.flecha}Volver</button>
+    <h1 class="h1-art">${esc(a0[1])}</h1>
+    <p class="sub">${a0[2] ? esc(a0[2]) + " · " : ""}${plural(l.length, "compra", "compras")} entre ${esc(fecha(pri.o.f))} y ${esc(fecha(ult.o.f))}${servicio ? " · servicio: el precio depende de cada trabajo" : ""}</p>
+    <div class="kpis">
+      <div class="kpi tarjeta"><span>Último precio</span><b>${esc(dinero(ult.pu))}</b><small>${esc(fechaCorta(ult.o.f))} · ${esc(ult.a[3] || "unidad")}</small></div>
+      <div class="kpi tarjeta"><span>Variación</span><b class="${varia > 0 ? "c-rojo" : varia < 0 ? "c-verde" : ""}">${varia == null ? "—" : (varia > 0 ? "▲ " : varia < 0 ? "▼ " : "") + Math.abs(varia) + "%"}</b><small>desde la primera compra</small></div>
+      <div class="kpi tarjeta"><span>Más bajo</span><b>${esc(dinero(Math.min(...pus)))}</b><small>unitario</small></div>
+      <div class="kpi tarjeta"><span>Más alto</span><b>${esc(dinero(Math.max(...pus)))}</b><small>unitario</small></div>
+    </div>
+    <h2>Precio unitario en el tiempo</h2>
+    <div class="tarjeta grafico" id="precioGraf"><div class="lectura"><small id="pgEtq">Toca un punto</small><b id="pgVal">${esc(dinero(ult.pu))}</b><small id="pgSub">${esc(ult.o.p)}</small></div><div id="pgLienzo"></div></div>
+    <h2>Por proveedor</h2>
+    <div class="tarjeta bloque">${lp.map((g, i) => `<a class="rank" href="#/ordenes/p:${encodeURIComponent(g.p)}"><div class="r1"><span>${esc(g.p)}</span><b>${esc(dinero(g.prom))}</b></div>
+      <small>${i === 0 && lp.length > 1 && g.prom < lp[1].prom * 0.995 ? '<span class="chip t-verde">Mejor precio</span> ' : ""}${plural(g.n, "compra", "compras")} · última ${esc(fechaCorta(g.ult.o.f))} · promedio por unidad</small></a>`).join("")}</div>
+    <h2>Compras</h2>
+    <div class="tarjeta bloque">${[...l].reverse().map(x => `<a class="rank" href="#/orden/${esc(x.o.n)}"><div class="r1"><span>Orden ${esc(x.o.n)} · ${esc(x.o.p)}</span><b>${esc(dinero(x.pu))}</b></div>
+      <small>${esc(fecha(x.o.f))} · ${esc(fmtNum.format(x.q))} ${esc(x.a[3] || "")}${x.o.m && x.o.m !== "COP" ? " · en " + esc(x.o.m) + ", convertido" : ""}</small></a>`).join("")}</div></div>`;
+  $("#btnVolver").onclick = () => (history.length > 1 ? history.back() : (location.hash = "#/tablero"));
+  lineaPrecio(l);
+}
+
+// una sola serie: el precio unitario de cada compra, en su fecha
+function lineaPrecio(l) {
+  const cont = $("#pgLienzo"); if (!cont) return;
+  const W = cont.clientWidth || 320, H = 180, pi = 10, pd = 62, pa = 14, pb = 26;
+  const ts = l.map(x => aFecha(x.o.f).getTime()), t0 = Math.min(...ts), t1 = Math.max(...ts);
+  // eje ajustado al rango de precios (en una línea de precios importa la variación, no el cero)
+  const vmin = Math.min(...l.map(x => x.pu)), vmax = Math.max(...l.map(x => x.pu)), holgura = Math.max((vmax - vmin) * 0.25, vmax * 0.03);
+  const lo = Math.max(0, vmin - holgura), hi = vmax + holgura;
+  const X = t => pi + (t1 === t0 ? (W - pi - pd) / 2 : (t - t0) / (t1 - t0) * (W - pi - pd));
+  const Y = v => pa + (1 - (v - lo) / (hi - lo || 1)) * (H - pa - pb);
+  const pts = l.map((x, i) => ({ x: X(ts[i]), y: Y(x.pu), d: x }));
+  const linea = pts.map((p, i) => (i ? "L" : "M") + p.x.toFixed(1) + " " + p.y.toFixed(1)).join(" ");
+  cont.innerHTML = `<svg class="linea-precio" viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Precio unitario en cada compra">
+    ${[0, 0.5, 1].map(f => { const v = lo + (hi - lo) * f; return `<line x1="${pi}" x2="${W - pd}" y1="${Y(v)}" y2="${Y(v)}" class="rej"/><text x="${W - pd + 8}" y="${Y(v) + 4}" class="eje">${esc(corto(v))}</text>`; }).join("")}
+    <path d="${linea}" class="trazo"/>
+    ${pts.map((p, i) => `<circle cx="${p.x}" cy="${p.y}" r="4.5" data-i="${i}"/>`).join("")}
+    <text x="${pi}" y="${H - 6}" class="eje">${esc(fechaCorta(l[0].o.f))}</text><text x="${W - pd}" y="${H - 6}" class="eje" text-anchor="end">${esc(fechaCorta(l[l.length - 1].o.f))}</text></svg>`;
+  const svg = cont.querySelector("svg"), cs = [...svg.querySelectorAll("circle")];
+  const elegir = i => {
+    cs.forEach((c, j) => c.classList.toggle("si", j === i));
+    const x = pts[i].d; $("#pgEtq").textContent = fecha(x.o.f) + " · orden " + x.o.n; $("#pgVal").textContent = dinero(x.pu); $("#pgSub").textContent = x.o.p;
+  };
+  const cercano = e => { const r = svg.getBoundingClientRect(), x = (e.clientX - r.left) / r.width * W; let m = 0; pts.forEach((p, i) => { if (Math.abs(p.x - x) < Math.abs(pts[m].x - x)) m = i; }); return m; };
+  svg.addEventListener("pointerdown", e => elegir(cercano(e)));
+  svg.addEventListener("pointermove", e => { if (e.buttons || e.pointerType === "mouse") elegir(cercano(e)); });
+  elegir(pts.length - 1);
 }
 
 // ---------------------------------------------------------------- mapa: dónde se entregan las órdenes
@@ -608,64 +778,118 @@ function asegurarLugares() {
     } finally { cargandoLugares = null; }
   })();
 }
-const nombreMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? m.nombre.replace(", D.C.", "") : "—"; };
-const deptoMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? m.dpto.replace(", D.C.", " D.C.") : ""; };
+// «PUERTO GAITÁN» -> «Puerto Gaitán»: más fácil de leer
+const MENORES = new Set(["de", "del", "la", "las", "los", "y", "el"]);
+const titulo = s => s.toLowerCase().split(" ").map((p, i) => (i && MENORES.has(p) ? p : p.charAt(0).toUpperCase() + p.slice(1))).join(" ");
+const nombreMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? titulo(m.nombre.replace(", D.C.", "")) : "—"; };
+const deptoMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? titulo(m.dpto.replace(", D.C.", "")).replace(/^Bogotá$/, "Bogotá D.C.") : ""; };
+// ancho real de un texto (para que los nombres del mapa no se encimen)
+const medidor = document.createElement("canvas").getContext("2d");
+const anchoTexto = (t, fs) => { medidor.font = "650 100px Inter, system-ui, sans-serif"; return medidor.measureText(t).width / 100 * fs; };
 
 function tarjetaMapa() {
   return `<div class="tarjeta mapa-caja" id="mapaCaja"><div class="esq" style="height:380px"></div></div>
+    <div class="tarjeta linea-tiempo" id="mapaTiempo" hidden></div>
     <div id="mapaSel"></div><div class="tarjeta bloque" id="mapaLista" style="margin-top:10px"></div>
     <a class="ver-mas tarjeta enlace-lugares" id="enlaceLugares" href="#/lugares" hidden></a>`;
 }
 
-async function pintarMapa(sel) {
-  const caja = $("#mapaCaja"); if (!caja) return;
-  try { await asegurarLugares(); } catch { caja.innerHTML = `<div class="vacio" style="padding:24px">No se pudo cargar el mapa. Revisa la conexión.</div>`; return; }
-  if ($("#mapaCaja") !== caja) return;
+function porMunicipio(lista) {
   const grupos = new Map();
-  for (const o of sel) {
+  for (const o of lista) {
     if (!o.mu) continue;
     const g = grupos.get(o.mu) || { cod: o.mu, v: 0, n: 0, est: 0, cl: new Map() };
     g.v += o.cop || 0; g.n++; if (o.muc === "cliente" || o.muc === "contrato") g.est++;
     g.cl.set(o.c, (g.cl.get(o.c) || 0) + (o.cop || 0)); grupos.set(o.mu, g);
   }
-  const lista = [...grupos.values()].sort((a, b) => b.v - a.v);
+  return [...grupos.values()].sort((a, b) => b.v - a.v).map(g => ({ ...g, ...UBIC.municipio(g.cod) }));
+}
+
+// R: el rango del tablero (para la línea de tiempo por meses)
+async function pintarMapa(sel, R) {
+  const caja = $("#mapaCaja"); if (!caja) return;
+  try { await asegurarLugares(); } catch { caja.innerHTML = `<div class="vacio" style="padding:24px">No se pudo cargar el mapa. Revisa la conexión.</div>`; return; }
+  if ($("#mapaCaja") !== caja) return;
+  const todos = porMunicipio(sel);
   const sinUbicar = sel.filter(o => !o.mu).length;
-  if (!lista.length) { caja.innerHTML = `<div class="vacio" style="padding:24px">Sin órdenes en este periodo.</div>`; $("#mapaLista").innerHTML = ""; return; }
-  const pts = lista.map(g => ({ ...g, ...UBIC.municipio(g.cod) }));
-  const max = pts[0].v || 1;
+  if (!todos.length) { caja.innerHTML = `<div class="vacio" style="padding:24px">Sin órdenes en este periodo.</div>`; $("#mapaLista").innerHTML = ""; return; }
 
-  // encuadre inicial: los puntos con un margen, con la proporción de la caja
-  const ancho = caja.clientWidth || 360, alto = Math.round(Math.min(460, Math.max(300, ancho * 1.05)));
-  let x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x)), y0 = Math.min(...pts.map(p => p.y)), y1 = Math.max(...pts.map(p => p.y));
-  const margen = 70; x0 -= margen; x1 += margen; y0 -= margen; y1 += margen;
-  let w = Math.max(240, x1 - x0), h = Math.max(240, y1 - y0);
-  const prop = ancho / alto;
-  if (w / h > prop) h = w / prop; else w = h * prop;
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  const inicial = { x: cx - w / 2, y: cy - h / 2, w, h };
-  const vb = { ...inicial };
+  // meses del periodo (para animar); la escala de los círculos es la misma en todos los meses
+  const meses = R && R.cubeta !== "dia" ? cubetas(R.desde, R.hasta, "mes").map(k => k.slice(0, 7)) : [];
+  const porMes = new Map(meses.map(m => [m, porMunicipio(sel.filter(o => (o.f || "").startsWith(m)))]));
+  const maxMes = Math.max(1, ...[...porMes.values()].flatMap(l => l.map(g => g.v)));
+  let mes = null, elegido = null;
 
-  caja.innerHTML = `<svg class="mapa" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" style="height:${alto}px" role="img" aria-label="Mapa de Colombia con las órdenes por municipio">
-      <g class="deptos">${MAPA.deptos.map(d => `<path d="${d.d}"><title>${esc(d.n)}</title></path>`).join("")}</g>
+  // encuadre: todos los puntos del periodo con margen y la proporción de la caja
+  const ancho = caja.clientWidth || 360, alto = Math.round(Math.min(480, Math.max(320, ancho * 1.08)));
+  let x0 = Math.min(...todos.map(p => p.x)), x1 = Math.max(...todos.map(p => p.x)), y0 = Math.min(...todos.map(p => p.y)), y1 = Math.max(...todos.map(p => p.y));
+  const margen = 80; x0 -= margen; x1 += margen; y0 -= margen; y1 += margen;
+  let w = Math.max(260, x1 - x0), h = Math.max(260, y1 - y0);
+  if (w / h > ancho / alto) h = w * alto / ancho; else w = h * ancho / alto;
+  const inicial = { x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - h / 2, w, h }, vb = { ...inicial };
+
+  const nd = s => normal(s).replace(/[^a-z0-9]+/g, " ").trim();
+  const deptoDe = new Map(MAPA.deptos.map((d, i) => [nd(d.n), i]));
+  caja.innerHTML = `<svg class="mapa" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" style="height:${alto}px" role="img" aria-label="Mapa de Colombia con lo comprado por municipio">
+      <defs><radialGradient id="burbuja" cx="38%" cy="32%" r="70%">
+        <stop offset="0" style="stop-color:color-mix(in srgb, var(--s1) 45%, #fff);stop-opacity:.95"/>
+        <stop offset="1" style="stop-color:var(--s1);stop-opacity:.62"/></radialGradient></defs>
+      <g class="deptos">${MAPA.deptos.map((d, i) => `<path data-d="${i}" d="${d.d}"><title>${esc(d.n)}</title></path>`).join("")}</g>
       <g class="burbujas"></g><g class="nombres"></g></svg>
+    <div class="mapa-mes" id="mapaMes" hidden></div>
     <div class="mapa-botones"><button class="redondo" data-z="in" aria-label="Acercar">+</button><button class="redondo" data-z="out" aria-label="Alejar">−</button><button class="redondo" data-z="fit" aria-label="Encuadrar">${ICO.mapaFit}</button></div>
     <div class="mapa-leyenda"><i></i><span>Tamaño = valor comprado</span></div>`;
   const svg = caja.querySelector("svg"), gB = svg.querySelector(".burbujas"), gN = svg.querySelector(".nombres");
-  let elegido = null;
-  const radio = p => vb.w * (0.012 + 0.055 * Math.sqrt(p.v / max));
-  const dibujarPuntos = () => {
+  const caminos = [...svg.querySelectorAll(".deptos path")];
+
+  const actuales = () => (mes ? porMes.get(mes) : todos);
+  const escala = () => (mes ? maxMes : todos[0].v || 1);
+  const radio = p => vb.w * (0.011 + 0.05 * Math.sqrt(p.v / escala()));
+
+  // nombres sin encimarse: se prueba arriba, abajo, a la derecha y a la izquierda; si no cabe, no se pone
+  function nombres(pts) {
+    const fs = vb.w * 0.029, alto = fs * 1.15, ocupado = [];
+    const choca = r => ocupado.some(o => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y);
+    const dentro = r => r.x >= vb.x && r.y >= vb.y && r.x + r.w <= vb.x + vb.w && r.y + r.h <= vb.y + vb.h;
+    for (const p of pts) { const r = radio(p) * 0.55; ocupado.push({ x: p.x - r, y: p.y - r, w: 2 * r, h: 2 * r, propio: p.cod }); } // el centro de cada círculo
+    const salida = [];
+    for (const p of pts) {
+      if (salida.length >= 14) break;
+      const t = nombreMuni(p.cod), an = anchoTexto(t, fs) + fs * 0.3, r = radio(p), sep = fs * 0.25;
+      const opciones = [
+        { x: p.x - an / 2, y: p.y - r - sep - alto, tx: p.x, ty: p.y - r - sep - fs * 0.22, a: "middle" },
+        { x: p.x - an / 2, y: p.y + r + sep, tx: p.x, ty: p.y + r + sep + fs * 0.9, a: "middle" },
+        { x: p.x + r + sep, y: p.y - alto / 2, tx: p.x + r + sep, ty: p.y + fs * 0.35, a: "start" },
+        { x: p.x - r - sep - an, y: p.y - alto / 2, tx: p.x - r - sep, ty: p.y + fs * 0.35, a: "end" },
+      ];
+      for (const o of opciones) {
+        const caja = { x: o.x, y: o.y, w: an, h: alto };
+        const otros = ocupado.filter(x => x.propio !== p.cod);
+        if (!dentro(caja) || otros.some(x => caja.x < x.x + x.w && caja.x + caja.w > x.x && caja.y < x.y + x.h && caja.y + caja.h > x.y)) continue;
+        ocupado.push(caja); salida.push(`<text x="${o.tx}" y="${o.ty}" font-size="${fs}" text-anchor="${o.a}">${esc(t)}</text>`); break;
+      }
+    }
+    return salida.join("");
+  }
+
+  const dibujar = () => {
+    const pts = actuales(), total = new Map();
+    for (const p of pts) { const k = deptoDe.get(nd(p.dpto)); if (k != null) total.set(k, (total.get(k) || 0) + p.v); }
+    const maxD = Math.max(1, ...total.values());
+    caminos.forEach((c, i) => { const v = total.get(i); c.style.fill = v ? `color-mix(in srgb, var(--s1) ${Math.round(5 + 15 * Math.sqrt(v / maxD))}%, var(--sup2))` : ""; });
     // primero los grandes, para que los pequeños queden encima y se puedan tocar
-    gB.innerHTML = [...pts].sort((a, b) => b.v - a.v).map(p => `<circle data-cod="${p.cod}" cx="${p.x}" cy="${p.y}" r="${radio(p)}" class="${p.cod === elegido ? "si" : ""}"><title>${esc(nombreMuni(p.cod))}: ${esc(corto(p.v))}</title></circle>`).join("");
-    const fs = vb.w * 0.032;
-    gN.innerHTML = pts.slice(0, 6).map(p => `<text x="${p.x}" y="${p.y - radio(p) - fs * 0.35}" font-size="${fs}">${esc(nombreMuni(p.cod))}</text>`).join("");
+    gB.innerHTML = [...pts].sort((a, b) => b.v - a.v).map(p => `<g data-cod="${p.cod}" class="${p.cod === elegido ? "si" : ""}"><circle cx="${p.x}" cy="${p.y}" r="${radio(p)}"/><circle class="centro" cx="${p.x}" cy="${p.y}" r="${vb.w * 0.0045}"/><title>${esc(nombreMuni(p.cod))}: ${esc(corto(p.v))}</title></g>`).join("");
+    gN.innerHTML = nombres(pts);
   };
-  const aplicar = () => { svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); dibujarPuntos(); };
+  const aplicar = () => { svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); dibujar(); };
+
   const elegir = cod => {
-    elegido = cod; dibujarPuntos();
-    const p = pts.find(x => x.cod === cod); if (!p) { $("#mapaSel").innerHTML = ""; return; }
-    const top = [...p.cl].sort((a, b) => b[1] - a[1]).slice(0, 3);
-    $("#mapaSel").innerHTML = `<div class="tarjeta mapa-sel entra"><div class="ms-tope"><div><b>${esc(nombreMuni(p.cod))}</b><small>${esc(deptoMuni(p.cod))}</small></div><button class="redondo" id="msCerrar" aria-label="Cerrar">✕</button></div>
-      <div class="ms-cifras"><div><b>${esc(corto(p.v))}</b><small>comprado</small></div><div><b>${fmtNum.format(p.n)}</b><small>${p.n === 1 ? "orden" : "órdenes"}</small></div><div><b>${Math.round(p.v / lista.reduce((s, g) => s + g.v, 0) * 100)}%</b><small>del periodo</small></div></div>
+    elegido = cod; dibujar();
+    const lista = actuales(), p = lista.find(x => x.cod === cod);
+    if (!p) { $("#mapaSel").innerHTML = cod ? `<div class="tarjeta mapa-sel"><p class="nota" style="margin:0">${esc(nombreMuni(cod))}: sin órdenes en ${esc(fmtMesLargo.format(aFecha(mes + "-01")))}.</p></div>` : ""; return; }
+    const top = [...p.cl].sort((a, b) => b[1] - a[1]).slice(0, 3), suma = lista.reduce((s, g) => s + g.v, 0);
+    $("#mapaSel").innerHTML = `<div class="tarjeta mapa-sel"><div class="ms-tope"><div><b>${esc(nombreMuni(p.cod))}</b><small>${esc(deptoMuni(p.cod))}${mes ? " · " + esc(fmtMesLargo.format(aFecha(mes + "-01"))) : ""}</small></div><button class="redondo" id="msCerrar" aria-label="Cerrar">✕</button></div>
+      <div class="ms-cifras"><div><b>${esc(corto(p.v))}</b><small>comprado</small></div><div><b>${fmtNum.format(p.n)}</b><small>${p.n === 1 ? "orden" : "órdenes"}</small></div><div><b>${Math.round(p.v / (suma || 1) * 100)}%</b><small>del ${mes ? "mes" : "periodo"}</small></div></div>
       ${top.length ? `<div class="ms-clientes">${top.map(([c, v]) => `<span><i></i>${esc(c)} · ${esc(corto(v))}</span>`).join("")}</div>` : ""}
       ${p.est ? `<p class="nota" style="margin:8px 0 0">${plural(p.est, "orden ubicada", "órdenes ubicadas")} por estimación (el texto no decía el lugar).</p>` : ""}
       <a class="boton primario ancho" href="#/ordenes/mu:${p.cod}">Ver sus órdenes</a></div>`;
@@ -673,16 +897,14 @@ async function pintarMapa(sel) {
   };
 
   // tocar, arrastrar, pellizcar y la rueda del ratón
-  const punteros = new Map(); let movido = false;
+  const punteros = new Map(); let movido = false, tocado = null, recorrido = 0;
   const enUnidades = (px, py) => { const r = svg.getBoundingClientRect(); return [vb.x + (px - r.left) / r.width * vb.w, vb.y + (py - r.top) / r.height * vb.h]; };
   const zoom = (f, cx, cy) => {
     const nw = Math.min(MAPA.ancho * 1.3, Math.max(30, vb.w * f)), k = nw / vb.w;
     vb.x = cx - (cx - vb.x) * k; vb.y = cy - (cy - vb.y) * k; vb.w = nw; vb.h *= k; aplicar();
   };
-  // el círculo tocado se recuerda al apoyar el dedo (después el mapa captura el puntero)
-  let tocado = null, recorrido = 0;
   svg.addEventListener("pointerdown", e => {
-    if (!punteros.size) { tocado = e.target.closest("circle")?.dataset.cod ?? null; recorrido = 0; movido = false; }
+    if (!punteros.size) { tocado = e.target.closest("[data-cod]")?.dataset.cod ?? null; recorrido = 0; movido = false; }
     punteros.set(e.pointerId, [e.clientX, e.clientY]); if (punteros.size > 1) movido = true;
     try { svg.setPointerCapture(e.pointerId); } catch { }
   });
@@ -695,14 +917,13 @@ async function pintarMapa(sel) {
       recorrido += Math.abs(dx) + Math.abs(dy); if (recorrido > 8) movido = true;
       vb.x -= dx / r.width * vb.w; vb.y -= dy / r.height * vb.h; aplicar();
     } else if (punteros.size === 2) {
-      movido = true;
       const otro = [...punteros].find(([id]) => id !== e.pointerId)[1];
       const dAntes = Math.hypot(antes[0] - otro[0], antes[1] - otro[1]), dAhora = Math.hypot(e.clientX - otro[0], e.clientY - otro[1]);
       if (dAhora > 0) zoom(dAntes / dAhora, ...enUnidades((e.clientX + otro[0]) / 2, (e.clientY + otro[1]) / 2));
     }
   });
   svg.addEventListener("pointerup", e => {
-    if (punteros.size === 1 && !movido && e.type === "pointerup") { elegir(tocado); if (tocado) vibrar(); } // un toque, no un arrastre
+    if (punteros.size === 1 && !movido) { elegir(tocado); if (tocado) vibrar(); } // un toque, no un arrastre
     punteros.delete(e.pointerId);
   });
   svg.addEventListener("pointercancel", e => punteros.delete(e.pointerId));
@@ -712,13 +933,45 @@ async function pintarMapa(sel) {
     if (b.dataset.z === "fit") Object.assign(vb, inicial), aplicar();
     else zoom(b.dataset.z === "in" ? 0.7 : 1 / 0.7, vb.x + vb.w / 2, vb.y + vb.h / 2);
   });
-  aplicar();
 
   // la lista: el mismo contenido del mapa, para leerlo sin tocar círculos
-  const maxL = lista[0].v || 1;
-  $("#mapaLista").innerHTML = lista.slice(0, 8).map(g => `<a class="rank" href="#/ordenes/mu:${g.cod}"><div class="r1"><span>${esc(nombreMuni(g.cod))} <small class="dep">${esc(deptoMuni(g.cod))}</small></span><b>${esc(corto(g.v))}</b></div>
-      <div class="r2"><i style="width:${Math.max(0.8, g.v / maxL * 100)}%"></i></div><small>${plural(g.n, "orden", "órdenes")}${g.est ? ` · ${g.est} estimada${g.est > 1 ? "s" : ""}` : ""}</small></a>`).join("") +
-    (lista.length > 8 ? `<div class="rank resto"><div class="r1"><span>Otros ${fmtNum.format(lista.length - 8)} municipios</span><b>${esc(corto(lista.slice(8).reduce((s, g) => s + g.v, 0)))}</b></div></div>` : "");
+  const pintarLista = () => {
+    const lista = actuales(), maxL = lista[0]?.v || 1;
+    $("#mapaLista").innerHTML = lista.length ? lista.slice(0, 8).map(g => `<a class="rank" href="#/ordenes/mu:${g.cod}"><div class="r1"><span>${esc(nombreMuni(g.cod))} <small class="dep">${esc(deptoMuni(g.cod))}</small></span><b>${esc(corto(g.v))}</b></div>
+        <div class="r2"><i style="width:${Math.max(0.8, g.v / maxL * 100)}%"></i></div><small>${plural(g.n, "orden", "órdenes")}${g.est ? ` · ${g.est} estimada${g.est > 1 ? "s" : ""}` : ""}</small></a>`).join("") +
+      (lista.length > 8 ? `<div class="rank resto"><div class="r1"><span>Otros ${fmtNum.format(lista.length - 8)} municipios</span><b>${esc(corto(lista.slice(8).reduce((s, g) => s + g.v, 0)))}</b></div></div>` : "")
+      : `<div class="vacio" style="padding:20px">Sin órdenes en este mes.</div>`;
+  };
+
+  // línea de tiempo: ver el mapa mes a mes, o en reproducción
+  const tiempo = $("#mapaTiempo");
+  if (meses.length > 1) {
+    tiempo.hidden = false;
+    tiempo.innerHTML = `<button class="redondo" id="tPlay" aria-label="Reproducir mes a mes">${ICO.play}</button>
+      <div class="t-centro"><div class="t-etq"><b id="tEtq">Todo el periodo</b><small id="tVal"></small></div>
+      <input type="range" id="tRango" min="0" max="${meses.length}" value="0" aria-label="Mes"></div>`;
+    const rango = $("#tRango"), etq = $("#tEtq"), val = $("#tVal"), btn = $("#tPlay"), cartel = $("#mapaMes");
+    let reloj = null;
+    const ir = i => {
+      mes = i ? meses[i - 1] : null; rango.value = i;
+      const l = actuales(), suma = l.reduce((s, g) => s + g.v, 0);
+      etq.textContent = mes ? fmtMesLargo.format(aFecha(mes + "-01")) : "Todo el periodo";
+      val.textContent = corto(suma);
+      cartel.hidden = !mes; cartel.textContent = mes ? fmtMesLargo.format(aFecha(mes + "-01")) : "";
+      rango.style.setProperty("--p", (i / meses.length * 100) + "%");
+      dibujar(); pintarLista(); if (elegido) elegir(elegido);
+    };
+    const parar = () => { clearInterval(reloj); reloj = null; btn.innerHTML = ICO.play; btn.classList.remove("activo"); };
+    btn.onclick = () => {
+      if (reloj) return parar();
+      btn.innerHTML = ICO.pausa; btn.classList.add("activo");
+      let i = Number(rango.value) >= meses.length ? 1 : Number(rango.value) + 1; ir(i);
+      reloj = setInterval(() => { if (!document.body.contains(btn)) return clearInterval(reloj); i++; if (i > meses.length) { parar(); ir(0); return; } ir(i); }, reducido() ? 1600 : 1100);
+    };
+    rango.oninput = () => { parar(); ir(Number(rango.value)); };
+    ir(0);
+  } else { tiempo.hidden = true; aplicar(); pintarLista(); }
+
   const corr = sel.filter(o => o.muc === "corregido").length, est = sel.filter(o => o.muc === "cliente" || o.muc === "contrato").length;
   const enl = $("#enlaceLugares");
   if (corr || est || sinUbicar) { enl.hidden = false; enl.innerHTML = `Revisar cómo se leyeron los lugares · ${[corr && plural(corr, "corregido", "corregidos"), est && plural(est, "estimado", "estimados"), sinUbicar && `${sinUbicar} sin ubicar`].filter(Boolean).join(" · ")}`; }
@@ -764,12 +1017,103 @@ function lugares(arg) {
   });
 }
 
+// ---------------------------------------------------------------- presentación: el tablero en pantalla grande
+// Diapositivas que pasan solas (para una reunión o una pantalla). Flechas o toques para moverse; Esc para salir.
+let presentacion = null;
+function terminarPresentacion() {
+  if (!presentacion) return;
+  clearInterval(presentacion.reloj); document.removeEventListener("keydown", presentacion.teclas);
+  document.documentElement.classList.remove("presentando");
+  if (document.fullscreenElement) document.exitFullscreen?.().catch(() => { });
+  presentacion = null;
+}
+function presentar() {
+  terminarPresentacion();
+  const R = rango("12m"), entre = o => o.f && o.f >= R.desde && o.f <= R.hasta;
+  const sel = D.ordenes.filter(entre), ant = D.ordenes.filter(o => o.f && o.f >= R.antes[0] && o.f <= R.antes[1]);
+  const suma = l => l.reduce((s, o) => s + (o.cop || 0), 0);
+  const cub = cubetas(R.desde, R.hasta, "mes"), pos = new Map(cub.map((k, i) => [k, i]));
+  const sumas = cub.map(() => 0), cuentas = cub.map(() => 0);
+  for (const o of sel) { const i = pos.get(claveDe(o.f, "mes")); if (i != null) { sumas[i] += o.cop || 0; cuentas[i]++; } }
+  const hoy = hoyIso(), delMes = D.ordenes.filter(o => (o.f || "").startsWith(hoy.slice(0, 7)));
+  const fmtN = v => fmtNum.format(Math.round(v)), provs = l => new Set(l.map(o => o.p)).size;
+  const diapositivas = [
+    { t: "Resumen del mes", html: () => `<div class="pr-portada"><small>Comprado en ${esc(fmtMesLargo.format(aFecha(hoy)))}</small><b>${esc(corto(suma(delMes)))}</b>
+        <div class="pr-trio"><div><b>${fmtN(delMes.length)}</b><small>órdenes</small></div><div><b>${fmtN(provs(delMes))}</b><small>proveedores</small></div><div><b>${fmtN(D.ordenes.filter(o => o.venc).length)}</b><small>entregas vencidas</small></div></div></div>` },
+    { t: "Últimos 12 meses", html: () => `<div class="kpis pr-kpis">${kpi("Comprado", suma(sel), suma(ant), corto)}${kpi("Órdenes", sel.length, ant.length, fmtN)}${kpi("Promedio por orden", sel.length ? suma(sel) / sel.length : 0, ant.length ? suma(ant) / ant.length : null, corto)}${kpi("Proveedores", provs(sel), provs(ant), fmtN)}</div>${grafico(cub, "mes", sumas, cuentas)}`, despues: () => activarGrafico(cub, "mes", sumas, cuentas) },
+    { t: "¿Dónde se entrega?", html: () => `<div class="pr-dos"><div>${tarjetaMapa()}</div></div>`, despues: () => pintarMapa(sel, R).then(() => setTimeout(() => $("#tPlay")?.click(), 900)) },
+    { t: "Proveedores principales", html: () => `<div class="tarjeta bloque">${ranking(agrupar(sel, o => o.p), "p", 8, g => plural(g.n, "orden", "órdenes"))}</div>` },
+    { t: "Por cliente", html: () => `<div class="tarjeta bloque">${partes(agrupar(sel, o => o.c))}</div>` },
+    { t: "Precios que subieron", html: () => `<div class="tarjeta bloque">${preciosQueSubieron(sel)}</div>` },
+    { t: "Pendientes", html: () => atencion() },
+  ];
+  document.documentElement.classList.add("presentando");
+  vista.innerHTML = `<div class="presenta"><div class="pr-barra"><i id="prProg"></i></div>
+    <header class="pr-cabeza"><div><small>Órdenes de Compra · ${esc(fecha(hoy))}</small><h1 id="prTitulo"></h1></div>
+      <div class="pr-controles"><button class="redondo" id="prAnt" aria-label="Anterior">‹</button><span id="prNum"></span><button class="redondo" id="prPausa" aria-label="Pausar">${ICO.pausa}</button><button class="redondo" id="prSig" aria-label="Siguiente">›</button><button class="boton" id="prSalir">Salir</button></div></header>
+    <div class="pr-cuerpo" id="prCuerpo"></div></div>`;
+  const P = presentacion = { i: 0, reloj: null, pausa: false, DUR: 12000 };
+  const ir = i => {
+    P.i = (i + diapositivas.length) % diapositivas.length; const d = diapositivas[P.i];
+    $("#prTitulo").textContent = d.t; $("#prNum").textContent = `${P.i + 1} / ${diapositivas.length}`;
+    $("#prCuerpo").innerHTML = `<div class="entra">${d.html()}</div>`; d.despues?.();
+    const barra = $("#prProg"); barra.style.animation = "none"; void barra.offsetWidth; barra.style.animation = P.pausa ? "none" : `avance ${P.DUR}ms linear forwards`;
+  };
+  const arrancar = () => { clearInterval(P.reloj); if (!P.pausa) P.reloj = setInterval(() => ir(P.i + 1), P.DUR); };
+  $("#prAnt").onclick = () => { ir(P.i - 1); arrancar(); };
+  $("#prSig").onclick = () => { ir(P.i + 1); arrancar(); };
+  $("#prPausa").onclick = () => { P.pausa = !P.pausa; $("#prPausa").innerHTML = P.pausa ? ICO.play : ICO.pausa; ir(P.i); arrancar(); };
+  $("#prSalir").onclick = () => { terminarPresentacion(); location.hash = "#/tablero"; };
+  P.teclas = e => {
+    if (e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); $("#prSig").click(); }
+    else if (e.key === "ArrowLeft") $("#prAnt").click();
+    else if (e.key === "Escape") $("#prSalir").click();
+  };
+  document.addEventListener("keydown", P.teclas);
+  document.documentElement.requestFullscreen?.().catch(() => { });
+  ir(0); arrancar();
+}
+
+// ---------------------------------------------------------------- avisos: lo nuevo desde la última vez
+// Al traer datos nuevos se compara con lo que ya habías visto. Si diste permiso, sale también un aviso del sistema.
+// (Un aviso con la aplicación cerrada necesitaría un servidor propio que la despierte; esta app no tiene servidor.)
+let NOVEDADES = null;
+function revisarNovedades() {
+  let antes = null; try { antes = JSON.parse(pref("vistos") || "null"); } catch { }
+  const ahora = { venc: D.ordenes.filter(o => o.venc).map(o => o.n), borr: D.ordenes.filter(o => o.e === 4).map(o => o.n), sc: D.ordenes.filter(o => o.sc).map(o => o.n), conf: D.ordenes.filter(o => o.e === 2).map(o => o.n) };
+  pref("vistos", JSON.stringify(ahora));
+  if (!antes) return;
+  const nuevos = k => { const s = new Set(antes[k] || []); return ahora[k].filter(n => !s.has(n)); };
+  const nv = { venc: nuevos("venc"), borr: nuevos("borr"), sc: nuevos("sc"), conf: nuevos("conf") };
+  if (!nv.venc.length && !nv.borr.length && !nv.sc.length && !nv.conf.length) return;
+  NOVEDADES = nv;
+  const lineas = [nv.venc.length && plural(nv.venc.length, "entrega se venció", "entregas se vencieron"), nv.borr.length && plural(nv.borr.length, "borrador nuevo por enviar", "borradores nuevos por enviar"),
+    nv.conf.length && plural(nv.conf.length, "orden confirmada", "órdenes confirmadas"), nv.sc.length && plural(nv.sc.length, "orden pasó a «sin confirmar»", "órdenes pasaron a «sin confirmar»")].filter(Boolean);
+  if (pref("avisos") === "si" && "Notification" in window && Notification.permission === "granted")
+    navigator.serviceWorker?.getRegistration().then(r => r?.showNotification("Órdenes de Compra", { body: lineas.join(NL), icon: "iconos/icono-192.png", badge: "iconos/icono-192.png", tag: "novedades", data: { url: "#/inicio" } })).catch(() => { });
+}
+function tarjetaNovedades() {
+  const nv = NOVEDADES; if (!nv) return "";
+  const filas = [[nv.venc, "rojo", ICO.alerta, "entrega se venció", "entregas se vencieron", "#/ordenes/vencida"], [nv.borr, "ambar", ICO.borrador, "borrador nuevo por enviar", "borradores nuevos por enviar", "#/ordenes/borrador"],
+    [nv.conf, "verde", ICO.ok, "orden confirmada por el proveedor", "órdenes confirmadas por el proveedor", "#/ordenes/confirmada"], [nv.sc, "ambar", ICO.reloj, "orden pasó a «sin confirmar»", "órdenes pasaron a «sin confirmar»", "#/seguimiento"]].filter(f => f[0].length);
+  return `<div class="tarjeta novedades"><div class="nov-tope"><b>Desde tu última visita</b><button class="redondo" id="novCerrar" aria-label="Ocultar">✕</button></div>
+    ${filas.map(([l, t, i, uno, varios, h]) => `<a class="aviso-fila" href="${h}"><div class="ico t-${t}">${i}</div><div><b>${esc(plural(l.length, uno, varios))}</b><small>${esc(l.slice(0, 4).join(", "))}${l.length > 4 ? "…" : ""}</small></div>${ICO.flecha}</a>`).join("")}</div>`;
+}
+async function activarAvisos() {
+  if (!("Notification" in window)) { aviso("Este celular no permite avisos desde la web"); return; }
+  const p = await Notification.requestPermission();
+  if (p === "granted") { pref("avisos", "si"); aviso("Listo: te avisaré de lo nuevo"); } else { pref("avisos", "no"); aviso("Sin permiso para avisos"); }
+  dibujar();
+}
+
 function ajustes() {
   const tema = pref("tema") || "sistema";
   vista.innerHTML = `<div class="entra"><h1>Ajustes</h1>
     <div class="tarjeta">
       <div class="campo"><label>Cuenta</label><small>${cuenta ? esc(cuenta.name || "") + " · " + esc(cuenta.username) : DEMO ? "Modo de ejemplo" : "Sin iniciar sesión"}</small></div>
       <div class="campo"><label for="ruta">Carpeta de órdenes en tu OneDrive</label><input id="ruta" value="${esc(ruta())}" autocapitalize="characters"><small>La que contiene _AUTOMATIZACION. Normalmente «COMPRAS/ORDENES DE COMPRA».</small></div>
+      <div class="campo"><label>Avisos</label><small>${pref("avisos") === "si" && "Notification" in window && Notification.permission === "granted" ? "Activados: cuando abras la app y haya algo nuevo (entregas vencidas, borradores, confirmaciones) te sale un aviso." : "Te avisa de lo nuevo cada vez que abres la app: entregas vencidas, borradores por enviar y órdenes confirmadas."}</small>${pref("avisos") === "si" ? "" : '<button class="boton" id="btnAvisos">Activar avisos</button>'}</div>
+      <div class="campo"><label>Modo presentación</label><small>El tablero en pantalla completa, con diapositivas que pasan solas. Ideal para reuniones.</small><a class="boton" href="#/presentar">Presentar</a></div>
       <div class="campo"><label for="tema">Tema</label><select id="tema"><option value="sistema">Como el celular</option><option value="claro">Claro</option><option value="oscuro">Oscuro</option></select></div>
     </div>
     <div class="acciones">
@@ -779,6 +1123,7 @@ function ajustes() {
     ${instalable()}
     <p class="nota">Los datos se leen de tu OneDrive con tu cuenta y solo con permiso de lectura. Se actualizan cada vez que el PC (o el portátil) corre la herramienta.${D ? " Última generación: " + esc(new Date(D.generado).toLocaleString("es-CO")) + "." : ""}</p></div>`;
   $("#tema").value = tema;
+  if ($("#btnAvisos")) $("#btnAvisos").onclick = activarAvisos;
   $("#tema").onchange = e => { pref("tema", e.target.value); aplicarTema(); };
   $("#ruta").onchange = e => { pref("ruta", e.target.value.trim().replace(/^[/]+|[/]+$/g, "")); almacen.borrar(); D = null; sincronizar(true); };
   $("#btnBorrar").onclick = async () => { await almacen.borrar(); aviso("Listo: se borró lo guardado"); };
@@ -831,6 +1176,7 @@ function abrirOrden(n) {
   const articulo = a => { const p = (a[6] || 0) / base * 100; return `<div class="articulo"><div class="d">${esc(a[1] || "(sin descripción)")}</div>
       ${a[2] ? `<div class="c">${esc(a[2])}</div>` : ""}<div class="q">${esc(fmtNum.format(a[4] ?? 0))} ${esc(a[3] || "")} × ${esc(dinero(a[5], o.m))}${a[0] ? " · " + esc(a[0]) : ""}</div>
       <div class="t">${esc(dinero(a[6], o.m))}<small>${p >= 1 ? Math.round(p) : "&lt;1"}%</small></div>
+      ${etiquetaPrecio(o, a) ? `<div class="historial">${etiquetaPrecio(o, a)}</div>` : ""}
       <div class="peso"><i style="width:${Math.min(100, p)}%"></i></div></div>`; };
   const MUESTRA = 6;
 
@@ -930,12 +1276,13 @@ function cerrarHoja(sinAnimar) {
 }
 
 // ---------------------------------------------------------------- navegación
-const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes, lugares };
+const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes, lugares, articulo, presentar };
 const PESTANAS = ["inicio", "ordenes", "tablero", "seguimiento", "entregas"];
 const reducido = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const vibrar = (ms = 8) => { try { navigator.vibrate?.(ms); } catch { } };
 
 function dibujar(arg) {
+  if (actual !== "presentar") terminarPresentacion();
   if (!D && actual !== "ajustes") return;
   VISTAS[actual](arg);
   dibujado = true;

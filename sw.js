@@ -1,6 +1,6 @@
 // Guarda la aplicación para que abra sin señal. Los datos de las órdenes NO pasan por
 // aquí: los guarda la propia aplicación (IndexedDB) y Graph nunca se cachea.
-const VERSION = "oc-movil-5";
+const VERSION = "oc-movil-6";
 const ARCHIVOS = ["./", "index.html", "app.css", "app.js", "config.js", "msal-browser.min.js", "lugares.js", "mapa.json",
   "manifest.webmanifest", "iconos/icono-192.png", "iconos/icono-512.png", "iconos/icono-180.png"];
 
@@ -24,4 +24,14 @@ self.addEventListener("fetch", e => {
       return r;
     }).catch(() => caches.match(e.request, { ignoreSearch: true }).then(r => r || caches.match("index.html")))
   );
+});
+
+// al tocar un aviso: abrir (o traer al frente) la aplicación
+self.addEventListener("notificationclick", e => {
+  e.notification.close();
+  const destino = new URL(e.notification.data?.url || "./", self.registration.scope).href;
+  e.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then(l => {
+    const abierta = l.find(c => c.url.startsWith(self.registration.scope));
+    return abierta ? abierta.focus().then(c => c.navigate?.(destino)) : self.clients.openWindow(destino);
+  }));
 });
