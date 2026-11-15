@@ -14,6 +14,7 @@ let msalApp = null, cuenta = null;
 let actual = "inicio"; // vista de fondo
 let instalar = null;   // aviso de instalación de Android
 let dibujado = false;
+let coloresCliente = null; // cliente -> casilla de color (fija, por lo comprado en total)
 
 // ---------------------------------------------------------------- utilidades
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -24,6 +25,8 @@ const fmtNum = new Intl.NumberFormat("es-CO", { maximumFractionDigits: 2 });
 const fmtFecha = new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "short", year: "numeric" });
 const fmtDia = new Intl.DateTimeFormat("es-CO", { weekday: "long", day: "numeric", month: "long" });
 const fmtMes = new Intl.DateTimeFormat("es-CO", { month: "short" });
+const fmtMesLargo = new Intl.DateTimeFormat("es-CO", { month: "long", year: "numeric" });
+const NL = String.fromCharCode(10);
 
 function dinero(v, m) {
   if (v == null) return "—";
@@ -38,6 +41,8 @@ function corto(v) {
 }
 const aFecha = iso => iso ? new Date(iso.slice(0, 10) + "T12:00:00") : null;
 const fecha = iso => iso ? fmtFecha.format(aFecha(iso)).split(".").join("") : "—";
+const fmtDiaMes = new Intl.DateTimeFormat("es-CO", { day: "numeric", month: "short" });
+const fechaCorta = iso => !iso ? "—" : iso.slice(0, 4) === hoyIso().slice(0, 4) ? fmtDiaMes.format(aFecha(iso)).split(".").join("") : fecha(iso);
 const hoyIso = () => { const d = new Date(); return new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10); };
 function hace(iso) {
   const min = Math.round((Date.now() - new Date(iso)) / 60000);
@@ -48,6 +53,11 @@ function hace(iso) {
   const d = Math.round(h / 24);
   return d === 1 ? "ayer" : `hace ${d} días`;
 }
+const diasEntre = (a, b) => Math.round((aFecha(b) - aFecha(a)) / 864e5);
+const isoDe = d => new Date(d - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+function mesInicio(atras) { const d = aFecha(hoyIso()); d.setDate(1); d.setMonth(d.getMonth() - atras); return isoDe(d); }
+const masDias = (iso, n) => { const d = aFecha(iso); d.setDate(d.getDate() + n); return isoDe(d); };
+const plural = (n, uno, varios) => `${fmtNum.format(n)} ${n === 1 ? uno : varios}`;
 
 const RELLENO = new Set(["SAS", "S.A.S", "S.A.S.", "SA", "S.A", "S.A.", "LTDA", "LTDA.", "DE", "DEL", "LA", "EL", "LOS", "Y", "&", "E", "S", "A", "CIA", "Y/O"]);
 function iniciales(n) {
@@ -65,12 +75,37 @@ function avatar(n, clase = "avatar") {
 const ESTADO = {
   0: ["Pendiente", "t-gris"], 1: ["Enviada", "t-azul"], 2: ["Confirmada", "t-verde"], 3: ["Antigua", "t-gris"], 4: ["Por enviar", "t-ambar"],
 };
-function chips(o) {
+function chipEstado(o) {
   const [t, c] = ESTADO[o.e] || ["—", "t-gris"];
-  let h = `<span class="chip ${c}">${t}</span>`;
+  return `<span class="chip ${c}">${t}</span>`;
+}
+function chips(o) {
+  let h = chipEstado(o);
   if (o.venc) h += ` <span class="chip t-rojo">Entrega vencida</span>`;
   else if (o.r) h += ` <span class="chip t-verde">Recibida</span>`;
   return h;
+}
+
+// color de la franja de cada fila: lo que pide atención salta a la vista
+function tono(o) {
+  if (o.venc) return "rojo";
+  if (o.e === 4 || o.sc) return "ambar";
+  if (o.r || o.e === 2) return "verde";
+  if (o.e === 1) return "azul";
+  return "gris";
+}
+// lo siguiente que hay que saber de la orden, en palabras
+function proximo(o) {
+  const hoy = hoyIso();
+  if (o.e === 4) return o.venc ? ["Sin enviar y con entrega vencida", "c-rojo"] : ["Falta darle Enviar", "c-ambar"];
+  if (o.venc) { const n = diasEntre(o.en, hoy); return [`Entrega vencida hace ${plural(n, "día", "días")}`, "c-rojo"]; }
+  if (o.sc) return [`Sin confirmar · ${plural(o.d, "día", "días")}`, "c-ambar"];
+  if (!o.r && o.e !== 3 && o.en) {
+    const n = diasEntre(hoy, o.en);
+    return [n === 0 ? "Llega hoy" : n === 1 ? "Llega mañana" : n <= 30 ? `Llega en ${n} días` : "Entrega " + fecha(o.en), n <= 1 ? "c-azul" : ""];
+  }
+  if (o.r) return ["Recibida", "c-verde"];
+  return [fecha(o.f), ""];
 }
 
 function aviso(t) {
@@ -125,6 +160,7 @@ function preparar(d) {
 
 function poner(datos, etag) {
   D = preparar(datos);
+  coloresCliente = null;
   $("#actualizado").textContent = (DEMO ? "Datos de ejemplo · " : "") + "Actualizado " + hace(D.generado) + (D.equipo && !DEMO ? " · " + D.equipo : "");
   const n = D.ordenes.filter(o => o.sc).length;
   $("#insignia").hidden = !n; $("#insignia").textContent = n > 99 ? "99+" : n;
@@ -169,12 +205,33 @@ const ICO = {
   pdf: '<svg viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h4"/></svg>',
   correo: '<svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>',
   buscar: '<svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+  pago: '<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg>',
+  compartir: '<svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
+  flecha: '<svg class="flecha" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
 };
 
 function fila(o) {
-  return `<a class="fila tarjeta" href="#/orden/${esc(o.n)}">${avatar(o.p)}
+  const [txt, c] = proximo(o);
+  return `<a class="fila tarjeta tono-${tono(o)}" href="#/orden/${esc(o.n)}">${avatar(o.p)}
     <div class="txt"><div class="l1"><span>Orden ${esc(o.n)}</span><span class="monto">${esc(corto(o.cop ?? o.v))}</span></div>
-    <div class="l2">${esc(o.p)}</div><div class="l3">${chips(o)}<span>${esc(fecha(o.f))}</span></div></div></a>`;
+    <div class="l2">${esc(o.p)}</div><div class="l3">${chipEstado(o)}<span class="${c}">${esc(txt)}</span></div></div></a>`;
+}
+
+// lo que pide atención hoy, en orden de importancia
+function atencion() {
+  const hoy = hoyIso(), manana = masDias(hoy, 1), semana = masDias(hoy, -7);
+  const pend = D.ordenes.filter(o => !o.r && o.e !== 3 && o.en);
+  const items = [];
+  const borr = D.ordenes.filter(o => o.e === 4).length;
+  if (borr) items.push(["ambar", ICO.borrador, plural(borr, "borrador por enviar", "borradores por enviar"), "Están en Outlook esperando que les des Enviar", "#/ordenes/borrador"]);
+  const nuevasV = D.ordenes.filter(o => o.venc && o.en >= semana).length;
+  if (nuevasV) items.push(["rojo", ICO.alerta, plural(nuevasV, "entrega se venció esta semana", "entregas se vencieron esta semana"), "Todavía sin entrada de mercancía", "#/ordenes/vencida"]);
+  const hoyN = pend.filter(o => o.en === hoy).length, manN = pend.filter(o => o.en === manana).length;
+  if (hoyN || manN) items.push(["azul", ICO.caja, [hoyN && `${hoyN} llega${hoyN > 1 ? "n" : ""} hoy`, manN && `${manN} llega${manN > 1 ? "n" : ""} mañana`].filter(Boolean).join(" · "), "Entregas pactadas con el proveedor", "#/entregas"]);
+  const viejas = D.ordenes.filter(o => o.sc && o.d >= 15).length;
+  if (viejas) items.push(["ambar", ICO.reloj, plural(viejas, "orden lleva", "órdenes llevan") + " +15 días sin confirmar", "Conviene escribirle al proveedor", "#/seguimiento"]);
+  if (!items.length) return `<div class="tarjeta atencion"><div class="aviso-fila"><div class="ico t-verde">${ICO.ok}</div><div><b>Todo al día</b><small>No hay nada urgente hoy</small></div></div></div>`;
+  return `<div class="tarjeta atencion">${items.map(([t, i, b, s, h]) => `<a class="aviso-fila" href="${h}"><div class="ico t-${t}">${i}</div><div><b>${esc(b)}</b><small>${esc(s)}</small></div>${ICO.flecha}</a>`).join("")}</div>`;
 }
 
 function inicio() {
@@ -193,14 +250,16 @@ function inicio() {
     sc.length ? `${sc.length} órdenes esperan confirmación del proveedor.` : "Todo al día.";
   vista.innerHTML = `<div class="entra">
     <h1>${saludo}${nombre ? ", <span class='deg'>" + esc(nombre) + "</span>" : ""}</h1><p class="sub">${esc(resumen)}</p>
+    <h2 style="margin-top:4px">Atención</h2>${atencion()}
+    <h2>Resumen</h2>
     <div class="cifras">
       <a class="cifra tarjeta" href="#/ordenes/borrador"><div class="ico t-ambar">${ICO.borrador}</div><b data-n="${borr.length}">0</b><span>Por enviar</span><small>borradores en Outlook</small></a>
       <a class="cifra tarjeta" href="#/seguimiento"><div class="ico t-azul">${ICO.reloj}</div><b data-n="${sc.length}">0</b><span>Sin confirmar</span><small>enviadas hace ${D.diasAlerta || 8}+ días</small></a>
       <a class="cifra tarjeta" href="#/entregas"><div class="ico t-rojo">${ICO.alerta}</div><b data-n="${venc.length}">0</b><span>Entregas vencidas</span><small>sin llegada · ${esc(corto(venc.reduce((s, o) => s + (o.cop || 0), 0)))}</small></a>
       <a class="cifra tarjeta" href="#/ordenes/mes"><div class="ico t-verde">${ICO.mes}</div><b data-n="${delMes.length}">0</b><span>Órdenes del mes</span><small>${esc(corto(delMes.reduce((s, o) => s + (o.cop || 0), 0)))}</small></a>
     </div>
-    <div class="tarjeta grafico" style="margin-top:10px"><div class="tope"><div><small class="sub">Comprado en ${esc(fmtMes.format(aFecha(hoy)).replace(".", ""))}</small><br><b>${esc(corto(sumas[5]))}</b></div><small class="sub">últimos 6 meses</small></div>
-      <div class="barras">${sumas.map((s, i) => `<div><i style="height:${Math.max(3, s / max * 100)}%;animation-delay:${i * 60}ms"></i><small>${esc(fmtMes.format(aFecha(meses[i] + "-01")).replace(".", ""))}</small></div>`).join("")}</div></div>
+    <a class="tarjeta grafico enlace-tarjeta" href="#/tablero" style="margin-top:10px"><div class="tope"><div><small class="sub">Comprado en ${esc(fmtMes.format(aFecha(hoy)).replace(".", ""))}</small><br><b>${esc(corto(sumas[5]))}</b></div><small class="ir">Ver tablero ${ICO.flecha}</small></div>
+      <div class="barras">${sumas.map((s, i) => `<div><i style="height:${Math.max(3, s / max * 100)}%;animation-delay:${i * 60}ms"></i><small>${esc(fmtMes.format(aFecha(meses[i] + "-01")).replace(".", ""))}</small></div>`).join("")}</div></a>
     ${instalable()}
     <h2>Recientes</h2><div class="lista">${D.ordenes.slice(0, 8).map(fila).join("")}</div></div>`;
   vista.querySelectorAll("[data-n]").forEach(contar);
@@ -223,12 +282,28 @@ const PRUEBA = {
   vencida: o => o.venc, recibida: o => o.r, mes: o => (o.f || "").startsWith(hoyIso().slice(0, 7)),
 };
 
+// faceta: viene del tablero o del detalle (todas las órdenes de un proveedor, cliente o tipo)
+let faceta = null, ordenLista = "recientes";
+const FACETAS = { p: "Proveedor", c: "Cliente", tc: "Tipo de compra" };
+const ORDENES_POR = [["recientes", "Más recientes"], ["valor", "Mayor valor"], ["entrega", "Entrega más próxima"]];
+
 function ordenes(arg) {
-  if (arg && PRUEBA[arg]) filtro = arg;
+  if (arg) {
+    const m = /^(p|c|tc|q):(.*)$/.exec(arg);
+    if (m) {
+      const v = decodeURIComponent(m[2]);
+      if (m[1] === "q") { texto = v; faceta = null; } else { faceta = { k: m[1], v }; texto = ""; }
+      filtro = "todas";
+    } else if (PRUEBA[arg]) { filtro = arg; faceta = null; }
+  }
   vista.innerHTML = `<div class="entra"><h1>Órdenes</h1>
     <div class="buscar"><div class="caja tarjeta">${ICO.buscar}<input id="q" type="search" placeholder="Número, proveedor, cliente o artículo" value="${esc(texto)}" autocomplete="off" enterkeyhint="search"></div>
-    <div class="filtros">${FILTROS.map(([k, t]) => `<button data-f="${k}" class="${k === filtro ? "si" : ""}">${t}</button>`).join("")}</div></div>
-    <div class="contador" id="cuenta"></div><div class="lista" id="res"></div><div id="mas"></div></div>`;
+    <div class="filtros">${FILTROS.map(([k, t]) => `<button data-f="${k}" class="${k === filtro ? "si" : ""}">${t}</button>`).join("")}</div>
+    ${faceta ? `<div class="faceta">${ICO.buscar}<span>${FACETAS[faceta.k]}: <b>${esc(faceta.v)}</b></span><button id="quitarFaceta" aria-label="Quitar este filtro">✕</button></div>` : ""}</div>
+    <div class="contador"><span id="cuenta"></span><select id="ordenPor" aria-label="Ordenar">${ORDENES_POR.map(([k, t]) => `<option value="${k}"${k === ordenLista ? " selected" : ""}>${t}</option>`).join("")}</select></div>
+    <div class="lista" id="res"></div><div id="mas"></div></div>`;
+  $("#ordenPor").onchange = e => { ordenLista = e.target.value; listar(); };
+  if ($("#quitarFaceta")) $("#quitarFaceta").onclick = () => { faceta = null; history.replaceState(null, "", "#/ordenes"); ordenes(); };
   const q = $("#q");
   let t;
   q.addEventListener("input", () => { clearTimeout(t); t = setTimeout(() => { texto = q.value; listar(); }, 160); });
@@ -242,13 +317,29 @@ function ordenes(arg) {
 let observador;
 function listar() {
   const palabras = normal(texto).split(" ").filter(Boolean);
-  const r = D.ordenes.filter(o => PRUEBA[filtro](o) && palabras.every(p => o.busca.includes(p)));
+  const r = D.ordenes.filter(o => PRUEBA[filtro](o) && (!faceta || o[faceta.k] === faceta.v) && palabras.every(p => o.busca.includes(p)));
+  const pendiente = o => !!o.en && !o.r && o.e !== 3;
+  if (ordenLista === "valor") r.sort((a, b) => (b.cop || 0) - (a.cop || 0));
+  else if (ordenLista === "entrega") r.sort((a, b) => (pendiente(b) - pendiente(a)) || (a.en || "9").localeCompare(b.en || "9"));
+  else r.sort((a, b) => (b.f || "").localeCompare(a.f || "") || String(b.n).localeCompare(String(a.n)));
   const total = r.reduce((s, o) => s + (o.cop || 0), 0);
-  $("#cuenta").textContent = `${fmtNum.format(r.length)} ${r.length === 1 ? "orden" : "órdenes"} · ${corto(total)}`;
+  $("#cuenta").textContent = `${plural(r.length, "orden", "órdenes")} · ${corto(total)}`;
   const res = $("#res"); res.innerHTML = "";
   if (!r.length) { res.innerHTML = `<div class="vacio"><div class="ilus">${ICO.buscar}</div><b>Ninguna orden coincide</b>Prueba con otro número, parte del proveedor o un artículo.</div>`; return; }
+  // con «Más recientes» la lista va por meses, cada uno con su total
+  const porMes = new Map();
+  if (ordenLista === "recientes") for (const o of r) { const k = (o.f || "").slice(0, 7); const g = porMes.get(k) || { n: 0, v: 0 }; g.n++; g.v += o.cop || 0; porMes.set(k, g); }
+  let ultimo = null;
+  const pintar = o => {
+    let h = "";
+    if (ordenLista === "recientes") {
+      const k = (o.f || "").slice(0, 7);
+      if (k !== ultimo) { ultimo = k; const g = porMes.get(k); h = `<div class="mes-cab"><b>${esc(k ? fmtMesLargo.format(aFecha(k + "-01")) : "Sin fecha")}</b><span>${plural(g.n, "orden", "órdenes")} · ${esc(corto(g.v))}</span></div>`; }
+    }
+    return h + fila(o);
+  };
   let n = 0;
-  const mas = () => { res.insertAdjacentHTML("beforeend", r.slice(n, n + 40).map(fila).join("")); n += 40; };
+  const mas = () => { res.insertAdjacentHTML("beforeend", r.slice(n, n + 40).map(pintar).join("")); n += 40; };
   mas();
   observador?.disconnect();
   observador = new IntersectionObserver(e => { if (e[0].isIntersecting && n < r.length) mas(); }, { rootMargin: "600px" });
@@ -291,6 +382,171 @@ function entregas() {
     <h2>Próximas</h2>
     ${porDia.size ? [...porDia].map(([iso, os]) => `<div class="fecha-grupo">${dia(iso)}<div><b>${esc(fmtDia.format(aFecha(iso)))}</b><br><small class="sub">${os.length} entrega${os.length > 1 ? "s" : ""} · ${esc(corto(os.reduce((s, o) => s + (o.cop || 0), 0)))}</small></div></div>
       <div class="lista">${os.map(fila).join("")}</div>`).join("") : `<div class="vacio"><div class="ilus">${ICO.mes}</div><b>Nada pactado</b>No hay entregas en los próximos 60 días.</div>`}</div>`;
+}
+
+// ---------------------------------------------------------------- tablero
+let periodo = pref("periodo") || "12m";
+const PERIODOS = [["mes", "Este mes"], ["3m", "3 meses"], ["12m", "12 meses"], ["ano", "Este año"], ["todo", "Todo"]];
+const anoAntes = iso => (Number(iso.slice(0, 4)) - 1) + iso.slice(4);
+
+// el periodo elegido, cómo se agrupa el gráfico y contra qué se compara (el mismo periodo del año pasado)
+function rango(p) {
+  const hoy = hoyIso();
+  if (p === "todo") {
+    const desde = D.ordenes.reduce((m, o) => o.f && o.f < m ? o.f : m, hoy);
+    return { desde, hasta: hoy, cubeta: "ano" };
+  }
+  const desde = p === "mes" ? mesInicio(0) : p === "3m" ? mesInicio(2) : p === "12m" ? mesInicio(11) : hoy.slice(0, 4) + "-01-01";
+  return { desde, hasta: hoy, antes: [anoAntes(desde), anoAntes(hoy)], cubeta: p === "mes" ? "dia" : p === "3m" ? "semana" : "mes" };
+}
+const lunes = d => { d.setDate(d.getDate() - ((d.getDay() + 6) % 7)); return d; };
+function cubetas(desde, hasta, tipo) {
+  const out = [], fin = aFecha(hasta);
+  let d = aFecha(desde);
+  if (tipo === "semana") lunes(d);
+  if (tipo === "mes" || tipo === "ano") d.setDate(1);
+  if (tipo === "ano") d.setMonth(0);
+  while (d <= fin) {
+    out.push(isoDe(d));
+    if (tipo === "dia") d.setDate(d.getDate() + 1);
+    else if (tipo === "semana") d.setDate(d.getDate() + 7);
+    else if (tipo === "mes") d.setMonth(d.getMonth() + 1);
+    else d.setFullYear(d.getFullYear() + 1);
+  }
+  return out;
+}
+function claveDe(f, tipo) {
+  if (tipo === "dia") return f;
+  if (tipo === "mes") return f.slice(0, 7) + "-01";
+  if (tipo === "ano") return f.slice(0, 4) + "-01-01";
+  return isoDe(lunes(aFecha(f)));
+}
+function etiqueta(k, tipo, larga) {
+  const d = aFecha(k), mes = fmtMes.format(d).replace(".", "");
+  if (tipo === "dia") return larga ? fecha(k) : String(d.getDate());
+  if (tipo === "semana") return larga ? "Semana del " + fecha(k) : d.getDate() + " " + mes;
+  if (tipo === "mes") return larga ? fmtMesLargo.format(d) : mes;
+  return k.slice(0, 4);
+}
+function techo(max) { // un tope redondo para la escala
+  const p = Math.pow(10, Math.floor(Math.log10(max)));
+  return [1, 2, 2.5, 5, 10].map(m => m * p).find(v => v >= max);
+}
+
+function agrupar(lista, clave) {
+  const m = new Map();
+  for (const o of lista) { const k = clave(o) || "(sin dato)"; const g = m.get(k) || { k, v: 0, n: 0 }; g.v += o.cop || 0; g.n++; m.set(k, g); }
+  return [...m.values()].sort((a, b) => b.v - a.v);
+}
+function articulos(lista) {
+  const m = new Map();
+  for (const o of lista) {
+    const tasa = o.v ? (o.cop || 0) / o.v : 1;
+    for (const a of o.it || []) {
+      const k = String(a[1] || "").trim(); if (!k) continue;
+      const g = m.get(k) || { k, v: 0, n: 0, q: 0, u: a[3] };
+      g.v += (a[6] || 0) * tasa; g.n++; g.q += a[4] || 0; m.set(k, g);
+    }
+  }
+  return [...m.values()].sort((a, b) => b.v - a.v);
+}
+
+// el color de cada cliente es fijo (por lo comprado en total), no cambia con el periodo
+function casillaCliente(c) {
+  coloresCliente ||= new Map(agrupar(D.ordenes, o => o.c).slice(0, 5).map((g, i) => [g.k, i + 1]));
+  return coloresCliente.get(c) || 0;
+}
+
+function kpi(titulo, valor, antes, fmt) {
+  const p = antes ? Math.round((valor - antes) / antes * 100) : null;
+  return `<div class="kpi tarjeta"><span>${titulo}</span><b>${esc(fmt(valor))}</b>
+    <small>${p == null ? "&nbsp;" : `${p > 0 ? "▲" : p < 0 ? "▼" : "="} ${Math.abs(p)}% vs. año pasado`}</small></div>`;
+}
+
+function grafico(cub, tipo, sumas, cuentas) {
+  const tope = techo(Math.max(1, ...sumas)), salto = Math.ceil(cub.length / 7);
+  const total = sumas.reduce((s, v) => s + v, 0), n = cuentas.reduce((s, v) => s + v, 0);
+  return `<div class="tarjeta grafico" id="tendencia">
+    <div class="lectura"><small id="tdEtq">Todo el periodo</small><b id="tdVal">${esc(corto(total))}</b><small id="tdCnt">${plural(n, "orden", "órdenes")}</small></div>
+    <div class="plano">
+      <div class="rejilla"><span data-v="${esc(corto(tope))}"></span><span data-v="${esc(corto(tope / 2))}"></span><span data-v="0"></span></div>
+      <div class="columnas">${cub.map((k, i) => `<button data-i="${i}" aria-label="${esc(etiqueta(k, tipo, true))}: ${esc(dinero(sumas[i]))}, ${plural(cuentas[i], "orden", "órdenes")}">
+        <span class="col"><i style="height:${sumas[i] ? Math.max(1.5, sumas[i] / tope * 100) : 0}%;animation-delay:${Math.min(i * 25, 500)}ms"></i></span>
+        <small><span>${(cub.length - 1 - i) % salto === 0 ? esc(etiqueta(k, tipo)) : ""}</span></small></button>`).join("")}</div>
+    </div>
+    <p class="pista">Toca o desliza sobre las barras para ver cada ${tipo === "dia" ? "día" : tipo === "semana" ? "semana" : tipo === "mes" ? "mes" : "año"}.</p>
+    <details class="como-tabla"><summary>Ver como tabla</summary><table><thead><tr><th></th><th>Comprado</th><th>Órdenes</th></tr></thead><tbody>
+      ${cub.map((k, i) => `<tr><td>${esc(etiqueta(k, tipo, true))}</td><td>${esc(corto(sumas[i]))}</td><td>${cuentas[i]}</td></tr>`).join("")}</tbody></table></details></div>`;
+}
+
+function activarGrafico(cub, tipo, sumas, cuentas) {
+  const cont = $("#tendencia .columnas"); if (!cont) return;
+  const bs = [...cont.children];
+  const elegir = i => {
+    cont.classList.add("elegido"); bs.forEach((b, j) => b.classList.toggle("si", j === i));
+    $("#tdEtq").textContent = etiqueta(cub[i], tipo, true);
+    $("#tdVal").textContent = corto(sumas[i]);
+    $("#tdCnt").textContent = plural(cuentas[i], "orden", "órdenes");
+  };
+  const porX = x => { const r = cont.getBoundingClientRect(); return Math.max(0, Math.min(bs.length - 1, Math.floor((x - r.left) / r.width * bs.length))); };
+  cont.addEventListener("pointerdown", e => { elegir(porX(e.clientX)); try { cont.setPointerCapture(e.pointerId); } catch { } });
+  cont.addEventListener("pointermove", e => { if (e.buttons || e.pointerType === "mouse") elegir(porX(e.clientX)); });
+  bs.forEach((b, i) => b.addEventListener("focus", () => elegir(i)));
+}
+
+function ranking(grupos, campo, cuantos, sub) {
+  if (!grupos.length) return `<div class="vacio" style="padding:24px">Sin órdenes en este periodo.</div>`;
+  const max = grupos[0].v || 1, top = grupos.slice(0, cuantos), resto = grupos.slice(cuantos);
+  return top.map(g => `<a class="rank" href="#/ordenes/${campo}:${encodeURIComponent(g.k)}"><div class="r1"><span>${esc(g.k)}</span><b>${esc(corto(g.v))}</b></div>
+      <div class="r2"><i style="width:${Math.max(0.8, g.v / max * 100)}%"></i></div><small>${esc(sub(g))}</small></a>`).join("") +
+    (resto.length ? `<div class="rank resto"><div class="r1"><span>Otros ${fmtNum.format(resto.length)}</span><b>${esc(corto(resto.reduce((s, g) => s + g.v, 0)))}</b></div></div>` : "");
+}
+
+function partes(grupos) {
+  const total = grupos.reduce((s, g) => s + g.v, 0) || 1;
+  const seg = new Map();
+  for (const g of grupos) {
+    const s = casillaCliente(g.k), k = s ? g.k : "Otros clientes";
+    const x = seg.get(k) || { k, v: 0, n: 0, s }; x.v += g.v; x.n += g.n; seg.set(k, x);
+  }
+  const lista = [...seg.values()].sort((a, b) => (a.s || 9) - (b.s || 9));
+  if (!lista.length) return `<div class="vacio" style="padding:24px">Sin órdenes en este periodo.</div>`;
+  return `<div class="pila">${lista.filter(x => x.v > 0).map(x => `<i style="flex:${x.v};background:var(--s${x.s || "o"})"></i>`).join("")}</div>
+    <div class="leyenda">${lista.map(x => `<${x.s ? `a href="#/ordenes/c:${encodeURIComponent(x.k)}"` : "div"} class="ley"><i style="background:var(--s${x.s || "o"})"></i><span>${esc(x.k)}<small>${plural(x.n, "orden", "órdenes")}</small></span><b>${esc(corto(x.v))}</b><em>${x.v / total < 0.005 ? "&lt;1" : Math.round(x.v / total * 100)}%</em></${x.s ? "a" : "div"}>`).join("")}</div>`;
+}
+
+function tablero(arg, sinAnimar) {
+  if (arg && PERIODOS.some(p => p[0] === arg)) periodo = arg;
+  const R = rango(periodo);
+  const entre = (o, a, b) => o.f && o.f >= a && o.f <= b;
+  const sel = D.ordenes.filter(o => entre(o, R.desde, R.hasta));
+  const ant = R.antes ? D.ordenes.filter(o => entre(o, R.antes[0], R.antes[1])) : null;
+  const suma = l => l.reduce((s, o) => s + (o.cop || 0), 0);
+  const provs = l => new Set(l.map(o => o.p)).size;
+  const cub = cubetas(R.desde, R.hasta, R.cubeta), pos = new Map(cub.map((k, i) => [k, i]));
+  const sumas = cub.map(() => 0), cuentas = cub.map(() => 0);
+  for (const o of sel) { const i = pos.get(claveDe(o.f, R.cubeta)); if (i != null) { sumas[i] += o.cop || 0; cuentas[i]++; } }
+  const tot = suma(sel), n = sel.length;
+  const fmtN = v => fmtNum.format(Math.round(v));
+  vista.innerHTML = `<div class="${sinAnimar ? "" : "entra"}"><h1>Tablero</h1>
+    <div class="filtros periodos">${PERIODOS.map(([k, t]) => `<button data-per="${k}" class="${k === periodo ? "si" : ""}">${t}</button>`).join("")}</div>
+    <p class="sub rango">${esc(fecha(R.desde))} – ${esc(fecha(R.hasta))}${R.antes ? " · comparado con el mismo periodo del año pasado" : ""}</p>
+    <div class="kpis">
+      ${kpi("Comprado", tot, ant && suma(ant), corto)}
+      ${kpi("Órdenes", n, ant && ant.length, fmtN)}
+      ${kpi("Promedio por orden", n ? tot / n : 0, ant && ant.length ? suma(ant) / ant.length : null, corto)}
+      ${kpi("Proveedores", provs(sel), ant && provs(ant), fmtN)}
+    </div>
+    <h2>Compras en el tiempo</h2>${grafico(cub, R.cubeta, sumas, cuentas)}
+    <h2>Por cliente</h2><div class="tarjeta bloque">${partes(agrupar(sel, o => o.c))}</div>
+    <h2>Proveedores principales</h2><div class="tarjeta bloque">${ranking(agrupar(sel, o => o.p), "p", 8, g => plural(g.n, "orden", "órdenes"))}</div>
+    <h2>Tipo de compra</h2><div class="tarjeta bloque">${ranking(agrupar(sel, o => o.tc), "tc", 6, g => plural(g.n, "orden", "órdenes"))}</div>
+    <h2>Artículos más comprados</h2><div class="tarjeta bloque">${ranking(articulos(sel), "q", 8, g => `${fmtNum.format(g.q)} ${g.u || "und"} · en ${plural(g.n, "orden", "órdenes")}`)}</div>
+    <p class="nota">Valores en pesos, con impuestos (los artículos, antes de impuestos). Las órdenes en dólares o euros van convertidas. Toca un cliente, proveedor o artículo para ver sus órdenes.</p></div>`;
+  vista.querySelectorAll("[data-per]").forEach(b => b.onclick = () => {
+    periodo = b.dataset.per; pref("periodo", periodo); tablero(null, true);
+  });
+  activarGrafico(cub, R.cubeta, sumas, cuentas);
 }
 
 function ajustes() {
@@ -339,33 +595,85 @@ function abrirOrden(n) {
     o.r ? paso("hecho", ICO.ok, "Entregada", "ya hay entrada de mercancía")
       : paso(o.venc ? "alerta" : "", ICO.caja, o.venc ? "Entrega vencida" : "Entregada", o.en ? "pactada para " + esc(fecha(o.en)) : "sin fecha pactada"),
   ];
+  const hoy = hoyIso();
   const it = o.it || [];
-  const datos = [["Cliente", o.c], ["Contrato", o.ct], ["Campo", o.ca], ["Solicitud (RQ)", o.rq], ["NIT", o.nit], ["Contacto", o.at],
-    ["Correo", o.em ? `<a href="mailto:${esc(o.em)}?subject=${encodeURIComponent("Orden de compra N° " + o.n)}">${esc(o.em)}</a>` : ""],
-    ["Forma de pago", o.fp], ["Tipo de compra", o.tc], ["Responsable", o.rs]]
-    .filter(([, v]) => v).map(([k, v]) => `<div class="dato"><span>${k}</span><b>${k === "Correo" ? v : esc(v)}</b></div>`).join("");
+  const imp = o.v != null && o.st != null && Math.abs(o.v - o.st) > 1 ? o.v - o.st : 0;
+  const asunto = encodeURIComponent("Orden de compra N° " + o.n);
+
+  // lo clave de un vistazo
+  const hechos = [];
+  if (o.en) {
+    let s = fechaCorta(o.en);
+    if (!o.r && o.e !== 3) { const d = diasEntre(hoy, o.en); s += d < 0 ? ` · hace ${-d} d` : d === 0 ? " · hoy" : ` · en ${d} d`; }
+    hechos.push([ICO.caja, o.venc ? "Entrega vencida" : o.r ? "Entregada" : "Entrega", s, o.venc ? "c-rojo" : ""]);
+  }
+  if (o.fe) hechos.push([ICO.enviar, "Enviada", fechaCorta(o.fe) + (o.d != null ? ` · hace ${o.d} d` : ""), o.sc ? "c-ambar" : ""]);
+  hechos.push([ICO.mes, "Emitida", fechaCorta(o.f), ""]);
+  if (o.fp) hechos.push([ICO.pago, "Pago", o.fp, ""]);
+
+  // artículos: cada uno con su peso dentro de la orden
+  const base = o.st || it.reduce((s, a) => s + (a[6] || 0), 0) || 1;
+  const articulo = a => { const p = (a[6] || 0) / base * 100; return `<div class="articulo"><div class="d">${esc(a[1] || "(sin descripción)")}</div>
+      ${a[2] ? `<div class="c">${esc(a[2])}</div>` : ""}<div class="q">${esc(fmtNum.format(a[4] ?? 0))} ${esc(a[3] || "")} × ${esc(dinero(a[5], o.m))}${a[0] ? " · " + esc(a[0]) : ""}</div>
+      <div class="t">${esc(dinero(a[6], o.m))}<small>${p >= 1 ? Math.round(p) : "&lt;1"}%</small></div>
+      <div class="peso"><i style="width:${Math.min(100, p)}%"></i></div></div>`; };
+  const MUESTRA = 6;
+
+  // historial con el mismo proveedor
+  const delProv = D.ordenes.filter(x => x.p === o.p).sort((a, b) => (b.f || "").localeCompare(a.f || ""));
+  const otras = delProv.filter(x => x !== o).slice(0, 4);
+  const desde = delProv.reduce((m, x) => x.f && (!m || x.f < m) ? x.f : m, "");
+  const enlaceProv = "#/ordenes/p:" + encodeURIComponent(o.p);
+
+  const grupo = (titulo, filas) => {
+    const h = filas.filter(([, v]) => v).map(([k, v, crudo]) => `<div class="dato"><span>${k}</span><b>${crudo ? v : esc(v)}</b></div>`).join("");
+    return h ? `<h2>${titulo}</h2><div class="tarjeta datos">${h}</div>` : "";
+  };
+
   $("#hojaCuerpo").innerHTML = `
-    <div class="cabeza">${avatar(o.p)}<div style="min-width:0"><h3>Orden ${esc(o.n)}</h3><p>${esc(o.p)}</p></div></div>
-    <div style="margin-top:12px">${chips(o)}</div>
-    <div class="total">${esc(dinero(o.v, o.m))}</div>
-    ${o.m && o.m !== "COP" && o.cop ? `<small class="sub">≈ ${esc(dinero(o.cop))}</small>` : ""}
+    <div class="cabeza">${avatar(o.p)}<div style="min-width:0"><h3>Orden ${esc(o.n)}</h3><p><a class="enlace" href="${enlaceProv}">${esc(o.p)}</a></p></div></div>
+    <div class="tarjeta heroe tono-${tono(o)}">
+      <div>${chips(o)}</div>
+      <div class="total">${esc(dinero(o.v, o.m))}</div>
+      <small class="sub">${o.m && o.m !== "COP" && o.cop ? "≈ " + esc(dinero(o.cop)) + (imp ? " · " : "") : ""}${imp ? "Subtotal " + esc(dinero(o.st, o.m)) + " + impuestos " + esc(dinero(imp, o.m)) : ""}</small>
+      <div class="hechos">${hechos.map(([i, t, v, c]) => `<div class="hecho"><div class="ico">${i}</div><div><small>${t}</small><b class="${c}">${esc(v)}</b></div></div>`).join("")}</div>
+    </div>
     <div class="acciones">
       <button class="boton primario" id="btnPdf">${ICO.pdf}Ver el PDF</button>
-      ${o.em ? `<a class="boton" href="mailto:${esc(o.em)}?subject=${encodeURIComponent("Orden de compra N° " + o.n)}">${ICO.correo}Escribir</a>` : ""}
+      ${o.em ? `<a class="boton" href="mailto:${esc(o.em)}?subject=${asunto}">${ICO.correo}Escribir</a>` : ""}
+      <button class="boton" id="btnCompartir">${ICO.compartir}Compartir</button>
     </div>
     <h2>Recorrido</h2><div class="tarjeta recorrido">${pasos.join("")}</div>
     <h2>Artículos${it.length ? " · " + it.length : ""}</h2>
-    <div class="tarjeta">${it.length ? it.map(a => `<div class="articulo"><div class="d">${esc(a[1] || "(sin descripción)")}</div>
-        ${a[2] ? `<div class="c">${esc(a[2])}</div>` : ""}<div class="q">${esc(fmtNum.format(a[4] ?? 0))} ${esc(a[3] || "")} × ${esc(dinero(a[5], o.m))}${a[0] ? " · " + esc(a[0]) : ""}</div>
-        <div class="t">${esc(dinero(a[6], o.m))}</div></div>`).join("") +
+    <div class="tarjeta">${it.length ? it.slice(0, MUESTRA).map(articulo).join("") +
+        (it.length > MUESTRA ? `<div id="masArt" hidden>${it.slice(MUESTRA).map(articulo).join("")}</div><button class="ver-mas" id="btnMasArt">Ver los ${it.length} artículos</button>` : "") +
         `<div class="sumas"><span>Subtotal</span><span>${esc(dinero(o.st, o.m))}</span></div>` +
-        (o.v && o.st && Math.abs(o.v - o.st) > 1 ? `<div class="sumas" style="border-top:0;padding-top:0"><span>Total con impuestos</span><span>${esc(dinero(o.v, o.m))}</span></div>` : "")
+        (imp ? `<div class="sumas fina"><span>Impuestos</span><span>${esc(dinero(imp, o.m))}</span></div><div class="sumas fina total-final"><span>Total</span><span>${esc(dinero(o.v, o.m))}</span></div>` : "")
       : `<div class="vacio" style="padding:24px">No se pudieron leer los artículos de esta orden.</div>`}</div>
     <h2>La orden</h2><div class="tarjeta vista-previa" id="previa"><div class="esq" style="width:100%;height:220px"></div></div>
-    <h2>Datos</h2><div class="tarjeta datos">${datos}</div>`;
+    <h2>Con este proveedor</h2>
+    <div class="tarjeta prov">
+      <div class="mini3"><div><b>${fmtNum.format(delProv.length)}</b><small>${delProv.length === 1 ? "orden" : "órdenes"}</small></div>
+        <div><b>${esc(corto(delProv.reduce((s, x) => s + (x.cop || 0), 0)))}</b><small>comprado</small></div>
+        <div><b>${desde ? desde.slice(0, 4) : "—"}</b><small>primera orden</small></div></div>
+      ${otras.map(x => `<a class="fila mini" href="#/orden/${esc(x.n)}"><div class="txt"><div class="l1"><span>Orden ${esc(x.n)}</span><span class="monto">${esc(corto(x.cop ?? x.v))}</span></div>
+        <div class="l3">${chipEstado(x)}<span>${esc(fecha(x.f))}</span></div></div>${ICO.flecha}</a>`).join("")}
+      ${delProv.length > 1 ? `<a class="ver-mas" href="${enlaceProv}">Ver sus ${fmtNum.format(delProv.length)} órdenes</a>` : ""}
+    </div>
+    ${grupo("Proyecto", [["Cliente", o.c], ["Contrato", o.ct], ["Campo", o.ca], ["Solicitud (RQ)", o.rq]])}
+    ${grupo("Proveedor", [["NIT", o.nit], ["Contacto", o.at], ["Correo", o.em ? `<a href="mailto:${esc(o.em)}?subject=${asunto}">${esc(o.em)}</a>` : "", true]])}
+    ${grupo("Compra", [["Forma de pago", o.fp], ["Tipo de compra", o.tc], ["Responsable", o.rs], ["Moneda", o.m && o.m !== "COP" ? o.m : ""]])}`;
   const h = $("#hoja"); h.hidden = false; h.classList.remove("saliendo");
   $("#hoja .panel").scrollTop = 0;
   $("#btnPdf").onclick = () => abrirPdf(o);
+  if ($("#btnMasArt")) $("#btnMasArt").onclick = e => { $("#masArt").hidden = false; e.currentTarget.remove(); };
+  $("#btnCompartir").onclick = async () => {
+    const t = [`Orden de compra N° ${o.n}`, o.p, dinero(o.v, o.m), (ESTADO[o.e] || [""])[0], o.en ? "Entrega: " + fecha(o.en) : ""].filter(Boolean).join(NL);
+    try {
+      if (navigator.share) await navigator.share({ title: "Orden " + o.n, text: t });
+      else { await navigator.clipboard.writeText(t); aviso("Copiado: ya lo puedes pegar"); }
+    } catch { }
+  };
   vistaPrevia(o);
 }
 
@@ -401,7 +709,7 @@ function cerrarHoja(sinAnimar) {
 }
 
 // ---------------------------------------------------------------- navegación
-const VISTAS = { inicio, ordenes, seguimiento, entregas, ajustes };
+const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes };
 
 function dibujar(arg) {
   if (!D && actual !== "ajustes") return;
