@@ -234,6 +234,20 @@ function atencion() {
   return `<div class="tarjeta atencion">${items.map(([t, i, b, s, h]) => `<a class="aviso-fila" href="${h}"><div class="ico t-${t}">${i}</div><div><b>${esc(b)}</b><small>${esc(s)}</small></div>${ICO.flecha}</a>`).join("")}</div>`;
 }
 
+// tendencia de 6 meses dentro de la tarjeta principal (una sola serie: línea blanca sobre el degradado)
+function lineaPortada(sumas, meses) {
+  const max = Math.max(1, ...sumas), n = sumas.length;
+  const pts = sumas.map((s, i) => [i / (n - 1) * 100, 37 - s / max * 31]);
+  const linea = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(2) + " " + p[1].toFixed(2)).join(" ");
+  const [ux, uy] = pts[n - 1];
+  return `<div class="p-linea"><div class="p-graf"><svg viewBox="0 0 100 40" preserveAspectRatio="none" aria-hidden="true">
+      <defs><linearGradient id="relleno-portada" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity=".32"/><stop offset="1" stop-color="#fff" stop-opacity="0"/></linearGradient></defs>
+      <path d="${linea} L100 40 L0 40 Z" fill="url(#relleno-portada)" stroke="none"/>
+      <path class="trazo" d="${linea}" fill="none" stroke="#fff" stroke-width="2.2" vector-effect="non-scaling-stroke"/></svg>
+      <i class="p-punto" style="left:${ux}%;top:${uy / 40 * 100}%"></i></div>
+    <div class="p-meses">${meses.map(m => `<span>${esc(fmtMes.format(aFecha(m + "-01")).replace(".", ""))}</span>`).join("")}</div></div>`;
+}
+
 function inicio() {
   const hoy = hoyIso(), mes = hoy.slice(0, 7);
   const borr = D.ordenes.filter(o => o.e === 4), sc = D.ordenes.filter(o => o.sc), venc = D.ordenes.filter(o => o.venc);
@@ -242,15 +256,27 @@ function inicio() {
   const saludo = hora < 12 ? "Buenos días" : hora < 19 ? "Buenas tardes" : "Buenas noches";
   const nombre = (cuenta?.name || "").split(" ")[0];
   // valor por mes, los últimos 6
-  const meses = [];
-  for (let i = 5; i >= 0; i--) { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - i); meses.push(d.toISOString().slice(0, 7)); }
+  const meses = [5, 4, 3, 2, 1, 0].map(i => mesInicio(i).slice(0, 7));
   const sumas = meses.map(m => D.ordenes.filter(o => (o.f || "").startsWith(m)).reduce((s, o) => s + (o.cop || 0), 0));
-  const max = Math.max(1, ...sumas);
   const resumen = borr.length ? `Tienes ${borr.length} borrador${borr.length > 1 ? "es" : ""} por enviar en Outlook.` :
     sc.length ? `${sc.length} órdenes esperan confirmación del proveedor.` : "Todo al día.";
+  // el mes hasta hoy contra el mismo corte del mes pasado
+  const finAnt = aFecha(hoy); finAnt.setDate(0);
+  const corteAnt = isoDe(new Date(finAnt.getFullYear(), finAnt.getMonth(), Math.min(aFecha(hoy).getDate(), finAnt.getDate()), 12));
+  const totMes = delMes.reduce((s, o) => s + (o.cop || 0), 0);
+  const totAnt = D.ordenes.filter(o => o.f && o.f >= mesInicio(1) && o.f <= corteAnt).reduce((s, o) => s + (o.cop || 0), 0);
+  const delta = totAnt ? Math.round((totMes - totAnt) / totAnt * 100) : null;
+  const provMes = new Set(delMes.map(o => o.p)).size;
   vista.innerHTML = `<div class="entra">
     <h1>${saludo}${nombre ? ", <span class='deg'>" + esc(nombre) + "</span>" : ""}</h1><p class="sub">${esc(resumen)}</p>
-    <h2 style="margin-top:4px">Atención</h2>${atencion()}
+    <a class="portada" href="#/tablero">
+      <div class="p-tope"><span>Comprado en ${esc(fmtMesLargo.format(aFecha(hoy)).split(" ")[0])}</span><span class="p-ir">Tablero ${ICO.flecha}</span></div>
+      <div class="p-valor">${esc(corto(totMes))}</div>
+      <div class="p-delta">${delta == null ? "Sin compras el mes pasado a esta altura" : `<b>${delta > 0 ? "▲" : delta < 0 ? "▼" : "="} ${Math.abs(delta)}%</b> vs. el mismo corte de ${esc(fmtMesLargo.format(finAnt).split(" ")[0])}`}</div>
+      ${lineaPortada(sumas, meses)}
+      <div class="p-pies"><div><b>${fmtNum.format(delMes.length)}</b><small>órdenes</small></div><div><b>${fmtNum.format(provMes)}</b><small>proveedores</small></div><div><b>${esc(corto(delMes.length ? totMes / delMes.length : 0))}</b><small>promedio</small></div></div>
+    </a>
+    <h2>Atención</h2>${atencion()}
     <h2>Resumen</h2>
     <div class="cifras">
       <a class="cifra tarjeta" href="#/ordenes/borrador"><div class="ico t-ambar">${ICO.borrador}</div><b data-n="${borr.length}">0</b><span>Por enviar</span><small>borradores en Outlook</small></a>
@@ -258,8 +284,6 @@ function inicio() {
       <a class="cifra tarjeta" href="#/entregas"><div class="ico t-rojo">${ICO.alerta}</div><b data-n="${venc.length}">0</b><span>Entregas vencidas</span><small>sin llegada · ${esc(corto(venc.reduce((s, o) => s + (o.cop || 0), 0)))}</small></a>
       <a class="cifra tarjeta" href="#/ordenes/mes"><div class="ico t-verde">${ICO.mes}</div><b data-n="${delMes.length}">0</b><span>Órdenes del mes</span><small>${esc(corto(delMes.reduce((s, o) => s + (o.cop || 0), 0)))}</small></a>
     </div>
-    <a class="tarjeta grafico enlace-tarjeta" href="#/tablero" style="margin-top:10px"><div class="tope"><div><small class="sub">Comprado en ${esc(fmtMes.format(aFecha(hoy)).replace(".", ""))}</small><br><b>${esc(corto(sumas[5]))}</b></div><small class="ir">Ver tablero ${ICO.flecha}</small></div>
-      <div class="barras">${sumas.map((s, i) => `<div><i style="height:${Math.max(3, s / max * 100)}%;animation-delay:${i * 60}ms"></i><small>${esc(fmtMes.format(aFecha(meses[i] + "-01")).replace(".", ""))}</small></div>`).join("")}</div></a>
     ${instalable()}
     <h2>Recientes</h2><div class="lista">${D.ordenes.slice(0, 8).map(fila).join("")}</div></div>`;
   vista.querySelectorAll("[data-n]").forEach(contar);
@@ -701,23 +725,46 @@ async function abrirPdf(o) {
 }
 
 function cerrarHoja(sinAnimar) {
-  const h = $("#hoja");
+  const h = $("#hoja"), panel = $("#hoja .panel");
   if (h.hidden) return;
-  if (sinAnimar) { h.hidden = true; return; }
+  if (sinAnimar) { h.hidden = true; panel.style.transform = ""; return; }
   h.classList.add("saliendo");
-  setTimeout(() => { h.hidden = true; h.classList.remove("saliendo"); }, 260);
+  setTimeout(() => { h.hidden = true; h.classList.remove("saliendo"); panel.style.transform = ""; }, 260);
 }
 
 // ---------------------------------------------------------------- navegación
 const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes };
+const PESTANAS = ["inicio", "ordenes", "tablero", "seguimiento", "entregas"];
+const reducido = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
+const vibrar = (ms = 8) => { try { navigator.vibrate?.(ms); } catch { } };
 
 function dibujar(arg) {
   if (!D && actual !== "ajustes") return;
   VISTAS[actual](arg);
   dibujado = true;
   document.querySelectorAll("#pestanas a").forEach(a => a.classList.toggle("si", a.dataset.p === actual));
+  const i = PESTANAS.indexOf(actual), ind = $("#indicador");
+  ind.style.setProperty("--i", Math.max(0, i)); ind.classList.toggle("oculto", i < 0);
+  observarTitulo();
   const bi = $("#btnInstalar"); if (bi) bi.onclick = async () => { instalar.prompt(); await instalar.userChoice; instalar = null; dibujar(); };
 }
+
+// al bajar, el título grande pasa a la barra de arriba
+function observarTitulo() {
+  const h1 = vista.querySelector("h1");
+  $("#tituloBarra").textContent = h1 ? h1.textContent : "";
+  revisarTitulo();
+}
+function revisarTitulo() {
+  const h1 = vista.querySelector("h1"), barra = $("#barra");
+  barra.classList.toggle("compacta", !!h1 && h1.getBoundingClientRect().bottom < barra.offsetHeight);
+}
+let pendienteTitulo = false;
+window.addEventListener("scroll", () => {
+  if (pendienteTitulo) return;
+  pendienteTitulo = true;
+  requestAnimationFrame(() => { pendienteTitulo = false; revisarTitulo(); });
+}, { passive: true });
 
 function alCambiar() {
   const h = location.hash.replace(/^#/, "").replace(/^[/]/, "");
@@ -732,9 +779,58 @@ function alCambiar() {
   cerrarHoja();
   const nueva = VISTAS[p] ? p : "inicio";
   if (antes && nueva === actual && !arg) return; // volver de una orden: la lista queda igual
-  actual = nueva;
-  dibujar(arg);
-  window.scrollTo({ top: 0 });
+  const cambiar = () => { actual = nueva; dibujar(arg); window.scrollTo({ top: 0 }); };
+  // entre pestañas: la vista se desliza hacia el lado de la pestaña y el indicador viaja con ella
+  if (document.startViewTransition && dibujado && !antes && nueva !== actual && !reducido()) {
+    const de = PESTANAS.indexOf(actual), a = PESTANAS.indexOf(nueva), raiz = document.documentElement;
+    raiz.dataset.dir = a >= 0 && de >= 0 && a < de ? "atras" : "adelante";
+    raiz.classList.add("en-transicion");
+    document.startViewTransition(cambiar).finished.finally(() => raiz.classList.remove("en-transicion"));
+  } else cambiar();
+}
+
+// gestos de celular: jalar hacia abajo para actualizar y deslizar la hoja para cerrarla
+function gestos() {
+  const jalar = $("#jalar"), hoja = $("#hoja"), panel = $("#hoja .panel"), UMBRAL = 80;
+  let y0 = null, d = 0;
+  window.addEventListener("touchstart", e => {
+    y0 = window.scrollY <= 0 && hoja.hidden && D && !jalar.classList.contains("cargando") ? e.touches[0].clientY : null; d = 0;
+  }, { passive: true });
+  window.addEventListener("touchmove", e => {
+    if (y0 == null) return;
+    d = Math.max(0, e.touches[0].clientY - y0);
+    if (window.scrollY > 0) { y0 = null; d = 0; }
+    const k = Math.min(1, d / UMBRAL);
+    jalar.style.setProperty("--k", k); jalar.classList.toggle("visible", d > 8);
+    if (d > UMBRAL && !jalar.classList.contains("listo")) vibrar(6);
+    jalar.classList.toggle("listo", d > UMBRAL);
+  }, { passive: true });
+  window.addEventListener("touchend", async () => {
+    if (y0 == null) return;
+    y0 = null;
+    if (d > UMBRAL) {
+      jalar.classList.add("cargando");
+      try { await sincronizar(true); } finally { jalar.classList.remove("cargando", "listo", "visible"); }
+    } else jalar.classList.remove("visible", "listo");
+    d = 0;
+  });
+
+  let h0 = null, dh = 0;
+  panel.addEventListener("touchstart", e => {
+    h0 = panel.scrollTop <= 0 ? e.touches[0].clientY : null; dh = 0; panel.style.transition = "none";
+  }, { passive: true });
+  panel.addEventListener("touchmove", e => {
+    if (h0 == null) return;
+    dh = Math.max(0, e.touches[0].clientY - h0);
+    if (panel.scrollTop > 0) dh = 0;
+    panel.style.transform = dh ? `translateY(${dh}px)` : "";
+  }, { passive: true });
+  panel.addEventListener("touchend", () => {
+    if (h0 == null) return;
+    h0 = null; panel.style.transition = "";
+    if (dh > 110) { vibrar(); history.length > 1 ? history.back() : (location.hash = "#/" + actual); }
+    else panel.style.transform = "";
+  });
 }
 
 document.addEventListener("click", e => {
@@ -742,7 +838,9 @@ document.addEventListener("click", e => {
   if (e.target.closest("[data-cerrar-visor]")) { $("#visor").hidden = true; return; }
   if (e.target.closest("#visor img")) $("#visor").classList.toggle("zoom");
 });
+$("#pestanas").addEventListener("click", e => { if (e.target.closest("a")) vibrar(); });
 $("#btnRecargar").onclick = () => sincronizar(true);
+gestos();
 $("#btnAjustes").onclick = () => (location.hash = "#/ajustes");
 window.addEventListener("hashchange", alCambiar);
 window.addEventListener("beforeinstallprompt", e => { e.preventDefault(); instalar = e; if (actual === "inicio" && D) dibujar(); });

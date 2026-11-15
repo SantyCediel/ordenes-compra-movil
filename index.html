@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>Órdenes de Compra</title>
   <meta name="description" content="Tus órdenes de compra, su estado y sus artículos, desde el celular.">
-  <meta name="theme-color" content="#0a0a0e" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#050506" media="(prefers-color-scheme: dark)">
   <meta name="theme-color" content="#f4f5f8" media="(prefers-color-scheme: light)">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
@@ -14,6 +14,9 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="iconos/icono-192.png">
   <link rel="apple-touch-icon" href="iconos/icono-180.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..800&display=swap">
   <link rel="stylesheet" href="app.css">
 </head>
 <body>
@@ -27,6 +30,7 @@
         <small id="actualizado">Cargando…</small>
       </div>
     </div>
+    <div id="tituloBarra" class="titulo-barra" aria-hidden="true"></div>
     <button id="btnRecargar" class="redondo" aria-label="Actualizar">
       <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg>
     </button>
@@ -37,7 +41,10 @@
 
   <main id="vista" tabindex="-1"></main>
 
+  <div id="jalar" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></div>
+
   <nav id="pestanas">
+    <i id="indicador" aria-hidden="true"></i>
     <a href="#/inicio" data-p="inicio"><svg viewBox="0 0 24 24"><path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/></svg><span>Inicio</span></a>
     <a href="#/ordenes" data-p="ordenes"><svg viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg><span>Órdenes</span></a>
     <a href="#/tablero" data-p="tablero"><svg viewBox="0 0 24 24"><path d="M3 20h18M6 16v-5M11 16V6M16 16v-8M21 16v-3"/></svg><span>Tablero</span></a>
