@@ -161,6 +161,7 @@ function preparar(d) {
 function poner(datos, etag) {
   D = preparar(datos);
   coloresCliente = null;
+  setTimeout(() => asegurarLugares().catch(() => { }), 1200); // el mapa y los municipios, sin estorbar el arranque
   $("#actualizado").textContent = (DEMO ? "Datos de ejemplo · " : "") + "Actualizado " + hace(D.generado) + (D.equipo && !DEMO ? " · " + D.equipo : "");
   const n = D.ordenes.filter(o => o.sc).length;
   $("#insignia").hidden = !n; $("#insignia").textContent = n > 99 ? "99+" : n;
@@ -208,6 +209,8 @@ const ICO = {
   pago: '<svg viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20M6 15h4"/></svg>',
   compartir: '<svg viewBox="0 0 24 24"><path d="M12 15V3M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>',
   flecha: '<svg class="flecha" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>',
+  mapaFit: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
+  pin: '<svg viewBox="0 0 24 24"><path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/></svg>',
 };
 
 function fila(o) {
@@ -308,22 +311,28 @@ const PRUEBA = {
 
 // faceta: viene del tablero o del detalle (todas las órdenes de un proveedor, cliente o tipo)
 let faceta = null, ordenLista = "recientes";
-const FACETAS = { p: "Proveedor", c: "Cliente", tc: "Tipo de compra" };
+const FACETAS = { p: "Proveedor", c: "Cliente", tc: "Tipo de compra", mu: "Municipio" };
 const ORDENES_POR = [["recientes", "Más recientes"], ["valor", "Mayor valor"], ["entrega", "Entrega más próxima"]];
 
 function ordenes(arg) {
   if (arg) {
-    const m = /^(p|c|tc|q):(.*)$/.exec(arg);
+    const m = /^(p|c|tc|mu|q):(.*)$/.exec(arg);
     if (m) {
       const v = decodeURIComponent(m[2]);
       if (m[1] === "q") { texto = v; faceta = null; } else { faceta = { k: m[1], v }; texto = ""; }
       filtro = "todas";
     } else if (PRUEBA[arg]) { filtro = arg; faceta = null; }
   }
+  if (faceta?.k === "mu" && !D.ubicado) { // primero hay que ubicar las órdenes en el mapa
+    vista.innerHTML = `<div class="entra"><h1>Órdenes</h1><div class="esq" style="height:300px;margin-top:16px"></div></div>`;
+    asegurarLugares().then(() => { if (actual === "ordenes") ordenes(); });
+    return;
+  }
+  const valorFaceta = faceta && (faceta.k === "mu" ? nombreMuni(faceta.v) + " · " + deptoMuni(faceta.v) : faceta.v);
   vista.innerHTML = `<div class="entra"><h1>Órdenes</h1>
-    <div class="buscar"><div class="caja tarjeta">${ICO.buscar}<input id="q" type="search" placeholder="Número, proveedor, cliente o artículo" value="${esc(texto)}" autocomplete="off" enterkeyhint="search"></div>
+    <div class="buscar"><div class="caja tarjeta">${ICO.buscar}<input id="q" type="search" placeholder="Número, proveedor, municipio o artículo" value="${esc(texto)}" autocomplete="off" enterkeyhint="search"></div>
     <div class="filtros">${FILTROS.map(([k, t]) => `<button data-f="${k}" class="${k === filtro ? "si" : ""}">${t}</button>`).join("")}</div>
-    ${faceta ? `<div class="faceta">${ICO.buscar}<span>${FACETAS[faceta.k]}: <b>${esc(faceta.v)}</b></span><button id="quitarFaceta" aria-label="Quitar este filtro">✕</button></div>` : ""}</div>
+    ${faceta ? `<div class="faceta">${faceta.k === "mu" ? ICO.pin : ICO.buscar}<span>${FACETAS[faceta.k]}: <b>${esc(valorFaceta)}</b></span><button id="quitarFaceta" aria-label="Quitar este filtro">✕</button></div>` : ""}</div>
     <div class="contador"><span id="cuenta"></span><select id="ordenPor" aria-label="Ordenar">${ORDENES_POR.map(([k, t]) => `<option value="${k}"${k === ordenLista ? " selected" : ""}>${t}</option>`).join("")}</select></div>
     <div class="lista" id="res"></div><div id="mas"></div></div>`;
   $("#ordenPor").onchange = e => { ordenLista = e.target.value; listar(); };
@@ -562,6 +571,7 @@ function tablero(arg, sinAnimar) {
       ${kpi("Proveedores", provs(sel), ant && provs(ant), fmtN)}
     </div>
     <h2>Compras en el tiempo</h2>${grafico(cub, R.cubeta, sumas, cuentas)}
+    <h2>¿Dónde se entrega?</h2>${tarjetaMapa()}
     <h2>Por cliente</h2><div class="tarjeta bloque">${partes(agrupar(sel, o => o.c))}</div>
     <h2>Proveedores principales</h2><div class="tarjeta bloque">${ranking(agrupar(sel, o => o.p), "p", 8, g => plural(g.n, "orden", "órdenes"))}</div>
     <h2>Tipo de compra</h2><div class="tarjeta bloque">${ranking(agrupar(sel, o => o.tc), "tc", 6, g => plural(g.n, "orden", "órdenes"))}</div>
@@ -571,6 +581,187 @@ function tablero(arg, sinAnimar) {
     periodo = b.dataset.per; pref("periodo", periodo); tablero(null, true);
   });
   activarGrafico(cub, R.cubeta, sumas, cuentas);
+  pintarMapa(sel);
+}
+
+// ---------------------------------------------------------------- mapa: dónde se entregan las órdenes
+// mapa.json: municipios del DANE (DIVIPOLA) y contorno de departamentos (geoBoundaries), ya proyectados.
+// lugares.js lee el texto libre del lugar de entrega, corrige errores y estima lo que no dice dónde.
+let MAPA = null, UBIC = null, cargandoLugares = null;
+const COMO = { exacto: ["Tal cual", "t-verde"], sitio: ["Sitio conocido", "t-azul"], corregido: ["Corregido", "t-ambar"], cliente: ["Estimado", "t-gris"], contrato: ["Estimado", "t-gris"] };
+
+function asegurarLugares() {
+  if (D && D.ubicado) return Promise.resolve(true);
+  return cargandoLugares ||= (async () => {
+    try {
+      MAPA ||= await (await fetch("mapa.json")).json();
+      UBIC ||= Lugares.crear(MAPA.municipios);
+      if (D && !D.ubicado) {
+        const r = UBIC.ubicar(D.ordenes);
+        D.ordenes.forEach((o, i) => {
+          o.mu = r[i]?.cod || null; o.muc = r[i]?.como || null;
+          if (o.mu) { const m = UBIC.municipio(o.mu); o.busca += " " + normal(m.nombre + " " + m.dpto); } // buscar por municipio
+        });
+        D.ubicado = true;
+      }
+      return true;
+    } finally { cargandoLugares = null; }
+  })();
+}
+const nombreMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? m.nombre.replace(", D.C.", "") : "—"; };
+const deptoMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? m.dpto.replace(", D.C.", " D.C.") : ""; };
+
+function tarjetaMapa() {
+  return `<div class="tarjeta mapa-caja" id="mapaCaja"><div class="esq" style="height:380px"></div></div>
+    <div id="mapaSel"></div><div class="tarjeta bloque" id="mapaLista" style="margin-top:10px"></div>
+    <a class="ver-mas tarjeta enlace-lugares" id="enlaceLugares" href="#/lugares" hidden></a>`;
+}
+
+async function pintarMapa(sel) {
+  const caja = $("#mapaCaja"); if (!caja) return;
+  try { await asegurarLugares(); } catch { caja.innerHTML = `<div class="vacio" style="padding:24px">No se pudo cargar el mapa. Revisa la conexión.</div>`; return; }
+  if ($("#mapaCaja") !== caja) return;
+  const grupos = new Map();
+  for (const o of sel) {
+    if (!o.mu) continue;
+    const g = grupos.get(o.mu) || { cod: o.mu, v: 0, n: 0, est: 0, cl: new Map() };
+    g.v += o.cop || 0; g.n++; if (o.muc === "cliente" || o.muc === "contrato") g.est++;
+    g.cl.set(o.c, (g.cl.get(o.c) || 0) + (o.cop || 0)); grupos.set(o.mu, g);
+  }
+  const lista = [...grupos.values()].sort((a, b) => b.v - a.v);
+  const sinUbicar = sel.filter(o => !o.mu).length;
+  if (!lista.length) { caja.innerHTML = `<div class="vacio" style="padding:24px">Sin órdenes en este periodo.</div>`; $("#mapaLista").innerHTML = ""; return; }
+  const pts = lista.map(g => ({ ...g, ...UBIC.municipio(g.cod) }));
+  const max = pts[0].v || 1;
+
+  // encuadre inicial: los puntos con un margen, con la proporción de la caja
+  const ancho = caja.clientWidth || 360, alto = Math.round(Math.min(460, Math.max(300, ancho * 1.05)));
+  let x0 = Math.min(...pts.map(p => p.x)), x1 = Math.max(...pts.map(p => p.x)), y0 = Math.min(...pts.map(p => p.y)), y1 = Math.max(...pts.map(p => p.y));
+  const margen = 70; x0 -= margen; x1 += margen; y0 -= margen; y1 += margen;
+  let w = Math.max(240, x1 - x0), h = Math.max(240, y1 - y0);
+  const prop = ancho / alto;
+  if (w / h > prop) h = w / prop; else w = h * prop;
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const inicial = { x: cx - w / 2, y: cy - h / 2, w, h };
+  const vb = { ...inicial };
+
+  caja.innerHTML = `<svg class="mapa" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" style="height:${alto}px" role="img" aria-label="Mapa de Colombia con las órdenes por municipio">
+      <g class="deptos">${MAPA.deptos.map(d => `<path d="${d.d}"><title>${esc(d.n)}</title></path>`).join("")}</g>
+      <g class="burbujas"></g><g class="nombres"></g></svg>
+    <div class="mapa-botones"><button class="redondo" data-z="in" aria-label="Acercar">+</button><button class="redondo" data-z="out" aria-label="Alejar">−</button><button class="redondo" data-z="fit" aria-label="Encuadrar">${ICO.mapaFit}</button></div>
+    <div class="mapa-leyenda"><i></i><span>Tamaño = valor comprado</span></div>`;
+  const svg = caja.querySelector("svg"), gB = svg.querySelector(".burbujas"), gN = svg.querySelector(".nombres");
+  let elegido = null;
+  const radio = p => vb.w * (0.012 + 0.055 * Math.sqrt(p.v / max));
+  const dibujarPuntos = () => {
+    // primero los grandes, para que los pequeños queden encima y se puedan tocar
+    gB.innerHTML = [...pts].sort((a, b) => b.v - a.v).map(p => `<circle data-cod="${p.cod}" cx="${p.x}" cy="${p.y}" r="${radio(p)}" class="${p.cod === elegido ? "si" : ""}"><title>${esc(nombreMuni(p.cod))}: ${esc(corto(p.v))}</title></circle>`).join("");
+    const fs = vb.w * 0.032;
+    gN.innerHTML = pts.slice(0, 6).map(p => `<text x="${p.x}" y="${p.y - radio(p) - fs * 0.35}" font-size="${fs}">${esc(nombreMuni(p.cod))}</text>`).join("");
+  };
+  const aplicar = () => { svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); dibujarPuntos(); };
+  const elegir = cod => {
+    elegido = cod; dibujarPuntos();
+    const p = pts.find(x => x.cod === cod); if (!p) { $("#mapaSel").innerHTML = ""; return; }
+    const top = [...p.cl].sort((a, b) => b[1] - a[1]).slice(0, 3);
+    $("#mapaSel").innerHTML = `<div class="tarjeta mapa-sel entra"><div class="ms-tope"><div><b>${esc(nombreMuni(p.cod))}</b><small>${esc(deptoMuni(p.cod))}</small></div><button class="redondo" id="msCerrar" aria-label="Cerrar">✕</button></div>
+      <div class="ms-cifras"><div><b>${esc(corto(p.v))}</b><small>comprado</small></div><div><b>${fmtNum.format(p.n)}</b><small>${p.n === 1 ? "orden" : "órdenes"}</small></div><div><b>${Math.round(p.v / lista.reduce((s, g) => s + g.v, 0) * 100)}%</b><small>del periodo</small></div></div>
+      ${top.length ? `<div class="ms-clientes">${top.map(([c, v]) => `<span><i></i>${esc(c)} · ${esc(corto(v))}</span>`).join("")}</div>` : ""}
+      ${p.est ? `<p class="nota" style="margin:8px 0 0">${plural(p.est, "orden ubicada", "órdenes ubicadas")} por estimación (el texto no decía el lugar).</p>` : ""}
+      <a class="boton primario ancho" href="#/ordenes/mu:${p.cod}">Ver sus órdenes</a></div>`;
+    $("#msCerrar").onclick = () => elegir(null);
+  };
+
+  // tocar, arrastrar, pellizcar y la rueda del ratón
+  const punteros = new Map(); let movido = false;
+  const enUnidades = (px, py) => { const r = svg.getBoundingClientRect(); return [vb.x + (px - r.left) / r.width * vb.w, vb.y + (py - r.top) / r.height * vb.h]; };
+  const zoom = (f, cx, cy) => {
+    const nw = Math.min(MAPA.ancho * 1.3, Math.max(30, vb.w * f)), k = nw / vb.w;
+    vb.x = cx - (cx - vb.x) * k; vb.y = cy - (cy - vb.y) * k; vb.w = nw; vb.h *= k; aplicar();
+  };
+  // el círculo tocado se recuerda al apoyar el dedo (después el mapa captura el puntero)
+  let tocado = null, recorrido = 0;
+  svg.addEventListener("pointerdown", e => {
+    if (!punteros.size) { tocado = e.target.closest("circle")?.dataset.cod ?? null; recorrido = 0; movido = false; }
+    punteros.set(e.pointerId, [e.clientX, e.clientY]); if (punteros.size > 1) movido = true;
+    try { svg.setPointerCapture(e.pointerId); } catch { }
+  });
+  svg.addEventListener("pointermove", e => {
+    if (!punteros.has(e.pointerId)) return;
+    const antes = punteros.get(e.pointerId); punteros.set(e.pointerId, [e.clientX, e.clientY]);
+    const r = svg.getBoundingClientRect();
+    if (punteros.size === 1) {
+      const dx = e.clientX - antes[0], dy = e.clientY - antes[1];
+      recorrido += Math.abs(dx) + Math.abs(dy); if (recorrido > 8) movido = true;
+      vb.x -= dx / r.width * vb.w; vb.y -= dy / r.height * vb.h; aplicar();
+    } else if (punteros.size === 2) {
+      movido = true;
+      const otro = [...punteros].find(([id]) => id !== e.pointerId)[1];
+      const dAntes = Math.hypot(antes[0] - otro[0], antes[1] - otro[1]), dAhora = Math.hypot(e.clientX - otro[0], e.clientY - otro[1]);
+      if (dAhora > 0) zoom(dAntes / dAhora, ...enUnidades((e.clientX + otro[0]) / 2, (e.clientY + otro[1]) / 2));
+    }
+  });
+  svg.addEventListener("pointerup", e => {
+    if (punteros.size === 1 && !movido && e.type === "pointerup") { elegir(tocado); if (tocado) vibrar(); } // un toque, no un arrastre
+    punteros.delete(e.pointerId);
+  });
+  svg.addEventListener("pointercancel", e => punteros.delete(e.pointerId));
+  svg.addEventListener("wheel", e => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, ...enUnidades(e.clientX, e.clientY)); }, { passive: false });
+  svg.addEventListener("dblclick", e => zoom(0.6, ...enUnidades(e.clientX, e.clientY)));
+  caja.querySelectorAll("[data-z]").forEach(b => b.onclick = () => {
+    if (b.dataset.z === "fit") Object.assign(vb, inicial), aplicar();
+    else zoom(b.dataset.z === "in" ? 0.7 : 1 / 0.7, vb.x + vb.w / 2, vb.y + vb.h / 2);
+  });
+  aplicar();
+
+  // la lista: el mismo contenido del mapa, para leerlo sin tocar círculos
+  const maxL = lista[0].v || 1;
+  $("#mapaLista").innerHTML = lista.slice(0, 8).map(g => `<a class="rank" href="#/ordenes/mu:${g.cod}"><div class="r1"><span>${esc(nombreMuni(g.cod))} <small class="dep">${esc(deptoMuni(g.cod))}</small></span><b>${esc(corto(g.v))}</b></div>
+      <div class="r2"><i style="width:${Math.max(0.8, g.v / maxL * 100)}%"></i></div><small>${plural(g.n, "orden", "órdenes")}${g.est ? ` · ${g.est} estimada${g.est > 1 ? "s" : ""}` : ""}</small></a>`).join("") +
+    (lista.length > 8 ? `<div class="rank resto"><div class="r1"><span>Otros ${fmtNum.format(lista.length - 8)} municipios</span><b>${esc(corto(lista.slice(8).reduce((s, g) => s + g.v, 0)))}</b></div></div>` : "");
+  const corr = sel.filter(o => o.muc === "corregido").length, est = sel.filter(o => o.muc === "cliente" || o.muc === "contrato").length;
+  const enl = $("#enlaceLugares");
+  if (corr || est || sinUbicar) { enl.hidden = false; enl.innerHTML = `Revisar cómo se leyeron los lugares · ${[corr && plural(corr, "corregido", "corregidos"), est && plural(est, "estimado", "estimados"), sinUbicar && `${sinUbicar} sin ubicar`].filter(Boolean).join(" · ")}`; }
+}
+
+// revisión: qué se leyó en cada texto escrito
+let filtroLugares = "revisar";
+function lugares(arg) {
+  if (arg) filtroLugares = arg;
+  vista.innerHTML = `<div class="entra"><h1>Lugares</h1><p class="sub">Cómo se leyó el lugar de entrega que está escrito en cada orden. Los errores de escritura se corrigen solos; si el texto no dice dónde (una dirección, una persona), se estima con las demás órdenes del mismo cliente.</p>
+    <div id="lugCuerpo"><div class="esq" style="height:300px"></div></div></div>`;
+  asegurarLugares().then(() => {
+    const cuerpo = $("#lugCuerpo"); if (!cuerpo) return;
+    const grupos = new Map();
+    for (const o of D.ordenes) {
+      const t = (o.ca || "").trim() || "(vacío)", id = t + "|" + o.mu + "|" + o.muc;
+      const g = grupos.get(id) || { t, mu: o.mu, como: o.muc, n: 0 }; g.n++; grupos.set(id, g);
+    }
+    const todos = [...grupos.values()].sort((a, b) => b.n - a.n);
+    const cuenta = f => D.ordenes.filter(f).length;
+    const FL = [["revisar", "Para revisar", g => g.como !== "exacto" && g.como !== "sitio"], ["corregido", "Corregidos", g => g.como === "corregido"],
+      ["estimado", "Estimados", g => g.como === "cliente" || g.como === "contrato" || !g.mu], ["todos", "Todos", () => true]];
+    const pintar = () => {
+      const f = (FL.find(x => x[0] === filtroLugares) || FL[0])[2], l = todos.filter(f);
+      $("#lugLista").innerHTML = l.length ? l.map(g => { const [t, c] = g.mu ? COMO[g.como] || ["—", "t-gris"] : ["Sin ubicar", "t-rojo"];
+        return `<a class="lug tarjeta" href="#/ordenes/q:${encodeURIComponent(g.t)}"><div class="lug-t">«${esc(g.t)}»</div>
+          <div class="lug-m">${ICO.flecha}<b>${esc(nombreMuni(g.mu))}</b><small>${esc(deptoMuni(g.mu))}</small></div>
+          <div class="lug-p"><span class="chip ${c}">${t}</span><small>${plural(g.n, "orden", "órdenes")}</small></div></a>`; }).join("")
+        : `<div class="vacio"><div class="ilus">${ICO.ok}</div><b>Nada que revisar</b>Todos los lugares se leyeron tal cual.</div>`;
+    };
+    cuerpo.innerHTML = `<div class="kpis lug-kpis">
+        <div class="kpi tarjeta"><span>Tal cual</span><b>${fmtNum.format(cuenta(o => o.muc === "exacto" || o.muc === "sitio"))}</b><small>órdenes</small></div>
+        <div class="kpi tarjeta"><span>Corregidos</span><b>${fmtNum.format(cuenta(o => o.muc === "corregido"))}</b><small>errores de escritura</small></div>
+        <div class="kpi tarjeta"><span>Estimados</span><b>${fmtNum.format(cuenta(o => o.muc === "cliente" || o.muc === "contrato"))}</b><small>por el cliente</small></div>
+        <div class="kpi tarjeta"><span>Sin ubicar</span><b>${fmtNum.format(cuenta(o => !o.mu))}</b><small>órdenes</small></div></div>
+      <div class="filtros" style="margin-top:12px">${FL.map(([k, t]) => `<button data-fl="${k}" class="${k === filtroLugares ? "si" : ""}">${t}</button>`).join("")}</div>
+      <div class="lista" id="lugLista" style="margin-top:10px"></div>
+      <p class="nota">Municipios: DIVIPOLA del DANE (datos.gov.co). Mapa: geoBoundaries / OpenStreetMap.</p>`;
+    cuerpo.querySelectorAll("[data-fl]").forEach(b => b.onclick = () => {
+      filtroLugares = b.dataset.fl; cuerpo.querySelectorAll("[data-fl]").forEach(x => x.classList.toggle("si", x === b)); pintar();
+    });
+    pintar();
+  });
 }
 
 function ajustes() {
@@ -684,12 +875,18 @@ function abrirOrden(n) {
         <div class="l3">${chipEstado(x)}<span>${esc(fecha(x.f))}</span></div></div>${ICO.flecha}</a>`).join("")}
       ${delProv.length > 1 ? `<a class="ver-mas" href="${enlaceProv}">Ver sus ${fmtNum.format(delProv.length)} órdenes</a>` : ""}
     </div>
-    ${grupo("Proyecto", [["Cliente", o.c], ["Contrato", o.ct], ["Campo", o.ca], ["Solicitud (RQ)", o.rq]])}
+    ${grupo("Proyecto", [["Cliente", o.c], ["Contrato", o.ct], ["Lugar escrito", o.ca], ["Municipio", `<span id="datoMuni">…</span>`, true], ["Solicitud (RQ)", o.rq]])}
     ${grupo("Proveedor", [["NIT", o.nit], ["Contacto", o.at], ["Correo", o.em ? `<a href="mailto:${esc(o.em)}?subject=${asunto}">${esc(o.em)}</a>` : "", true]])}
     ${grupo("Compra", [["Forma de pago", o.fp], ["Tipo de compra", o.tc], ["Responsable", o.rs], ["Moneda", o.m && o.m !== "COP" ? o.m : ""]])}`;
   const h = $("#hoja"); h.hidden = false; h.classList.remove("saliendo");
   $("#hoja .panel").scrollTop = 0;
   $("#btnPdf").onclick = () => abrirPdf(o);
+  asegurarLugares().then(() => {
+    const el = $("#datoMuni"); if (!el) return;
+    if (!o.mu) { el.textContent = "Sin ubicar"; return; }
+    const nota = o.muc === "corregido" ? "corregido de lo escrito" : o.muc === "cliente" || o.muc === "contrato" ? "estimado: el texto no dice el lugar" : "";
+    el.innerHTML = `<a href="#/ordenes/mu:${o.mu}">${esc(nombreMuni(o.mu))}</a> · ${esc(deptoMuni(o.mu))}${nota ? `<small class="nota-dato">${nota}</small>` : ""}`;
+  }).catch(() => { const el = $("#datoMuni"); if (el) el.textContent = "—"; });
   if ($("#btnMasArt")) $("#btnMasArt").onclick = e => { $("#masArt").hidden = false; e.currentTarget.remove(); };
   $("#btnCompartir").onclick = async () => {
     const t = [`Orden de compra N° ${o.n}`, o.p, dinero(o.v, o.m), (ESTADO[o.e] || [""])[0], o.en ? "Entrega: " + fecha(o.en) : ""].filter(Boolean).join(NL);
@@ -733,7 +930,7 @@ function cerrarHoja(sinAnimar) {
 }
 
 // ---------------------------------------------------------------- navegación
-const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes };
+const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes, lugares };
 const PESTANAS = ["inicio", "ordenes", "tablero", "seguimiento", "entregas"];
 const reducido = () => matchMedia("(prefers-reduced-motion: reduce)").matches;
 const vibrar = (ms = 8) => { try { navigator.vibrate?.(ms); } catch { } };

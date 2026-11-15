@@ -1,7 +1,7 @@
 // Guarda la aplicación para que abra sin señal. Los datos de las órdenes NO pasan por
 // aquí: los guarda la propia aplicación (IndexedDB) y Graph nunca se cachea.
-const VERSION = "oc-movil-4";
-const ARCHIVOS = ["./", "index.html", "app.css", "app.js", "config.js", "msal-browser.min.js",
+const VERSION = "oc-movil-5";
+const ARCHIVOS = ["./", "index.html", "app.css", "app.js", "config.js", "msal-browser.min.js", "lugares.js", "mapa.json",
   "manifest.webmanifest", "iconos/icono-192.png", "iconos/icono-512.png", "iconos/icono-180.png"];
 
 self.addEventListener("install", e => {
