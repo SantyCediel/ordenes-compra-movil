@@ -6,6 +6,9 @@ const C = window.CONFIG_OC || {};
 const ALCANCES = ["User.Read", "Files.Read"];
 const GRAPH = "https://graph.microsoft.com/v1.0";
 const DEMO = new URLSearchParams(location.search).has("demo");
+// dentro de la aplicación del computador: los datos vienen del disco y los PDF los abre Windows
+const LOCAL = new URLSearchParams(location.search).has("local");
+const escritorio = m => { try { window.chrome?.webview?.postMessage(m); return !!window.chrome?.webview; } catch { return false; } };
 const $ = s => document.querySelector(s);
 const vista = $("#vista");
 
@@ -172,6 +175,11 @@ async function sincronizar(manual) {
   const b = $("#btnRecargar"); b.classList.add("girando");
   try {
     if (DEMO) { poner(await (await fetch("demo.json")).json()); dibujar(); return; }
+    if (LOCAL) {
+      const datos = await (await fetch("datos.json", { cache: "no-store" })).json();
+      if (D && D.generado === datos.generado) { if (manual) aviso("Ya tienes lo último"); return; }
+      poner(datos); dibujar(); if (manual) aviso("Actualizado"); return;
+    }
     if (!cuenta) return;
     const meta = await graph(enDrive(ruta() + "/_AUTOMATIZACION/movil/datos.json"));
     const guardado = await almacen.leer("datos");
@@ -298,6 +306,7 @@ function inicio() {
 }
 
 function instalable() {
+  if (LOCAL) return "";
   if (matchMedia("(display-mode: standalone)").matches || navigator.standalone || pref("sinInstalar")) return "";
   const ios = /iphone|ipad/i.test(navigator.userAgent);
   return `<div class="tarjeta" style="margin-top:10px;padding:14px 16px;display:flex;gap:12px;align-items:center">
@@ -1110,7 +1119,7 @@ function ajustes() {
   const tema = pref("tema") || "sistema";
   vista.innerHTML = `<div class="entra"><h1>Ajustes</h1>
     <div class="tarjeta">
-      <div class="campo"><label>Cuenta</label><small>${cuenta ? esc(cuenta.name || "") + " · " + esc(cuenta.username) : DEMO ? "Modo de ejemplo" : "Sin iniciar sesión"}</small></div>
+      <div class="campo"><label>Cuenta</label><small>${cuenta ? esc(cuenta.name || "") + " · " + esc(cuenta.username) : DEMO ? "Modo de ejemplo" : LOCAL ? "Datos de este computador (sin iniciar sesión)" : "Sin iniciar sesión"}</small></div>
       <div class="campo"><label for="ruta">Carpeta de órdenes en tu OneDrive</label><input id="ruta" value="${esc(ruta())}" autocapitalize="characters"><small>La que contiene _AUTOMATIZACION. Normalmente «COMPRAS/ORDENES DE COMPRA».</small></div>
       <div class="campo"><label>Avisos</label><small>${pref("avisos") === "si" && "Notification" in window && Notification.permission === "granted" ? "Activados: cuando abras la app y haya algo nuevo (entregas vencidas, borradores, confirmaciones) te sale un aviso." : "Te avisa de lo nuevo cada vez que abres la app: entregas vencidas, borradores por enviar y órdenes confirmadas."}</small>${pref("avisos") === "si" ? "" : '<button class="boton" id="btnAvisos">Activar avisos</button>'}</div>
       <div class="campo"><label>Modo presentación</label><small>El tablero en pantalla completa, con diapositivas que pasan solas. Ideal para reuniones.</small><a class="boton" href="#/presentar">Presentar</a></div>
@@ -1246,6 +1255,7 @@ function abrirOrden(n) {
 
 async function vistaPrevia(o) {
   const el = $("#previa");
+  if (LOCAL) { el.innerHTML = "<p>Usa «Ver el PDF» para abrir la orden.</p>"; return; }
   if (DEMO || !cuenta || !D.raizOneDrive && D.raizOneDrive !== "") { el.innerHTML = "<p>La imagen de la orden aparece cuando entras con tu cuenta.</p>"; return; }
   try {
     const camino = enDrive((D.raizOneDrive ? D.raizOneDrive + "/" : "") + o.a);
@@ -1260,6 +1270,7 @@ async function vistaPrevia(o) {
 }
 
 async function abrirPdf(o) {
+  if (LOCAL) { if (!escritorio({ tipo: "pdf", a: o.a })) aviso("No se pudo abrir el PDF"); return; }
   if (DEMO || !cuenta) { aviso("Entra con tu cuenta para abrir el PDF"); return; }
   try {
     const it = await graph(enDrive((D.raizOneDrive ? D.raizOneDrive + "/" : "") + o.a) + "?$select=webUrl");
@@ -1402,12 +1413,12 @@ function pantallaIngreso() {
 
 async function arrancar() {
   aplicarTema();
-  if ("serviceWorker" in navigator && !DEMO) navigator.serviceWorker.register("sw.js").catch(() => { });
+  if ("serviceWorker" in navigator && !DEMO && !LOCAL) navigator.serviceWorker.register("sw.js").catch(() => { });
   vista.innerHTML = `<div class="entra"><div class="esq" style="height:38px;width:60%;margin:8px 0 18px"></div>
     <div class="cifras">${'<div class="esq" style="height:128px"></div>'.repeat(4)}</div>
     <div class="esq" style="height:170px;margin-top:10px"></div></div>`;
 
-  if (DEMO) { await sincronizar(); alCambiar(); return; }
+  if (DEMO || LOCAL) { await sincronizar(); alCambiar(); return; }
   if (!C.clientId) {
     vista.innerHTML = `<div class="vacio entra"><div class="ilus">${ICO.alerta}</div><b>Falta configurar la aplicación</b>Hay que poner el «Id. de aplicación» de Microsoft Entra en config.js.</div>`;
     return;

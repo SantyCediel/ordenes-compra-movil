@@ -604,4 +604,10 @@ html.presentando main { max-width: 1280px; padding: 0 clamp(16px, 4vw, 56px) 32p
 .pr-trio b { display: block; font-size: clamp(28px, 4vw, 54px); font-weight: 800; letter-spacing: -.03em; }
 .pr-trio small { color: var(--tinta3); font-size: clamp(13px, 1.4vw, 17px); }
 
+/* pantallas anchas (computador): más espacio y cifras en una fila */
+@media (min-width: 1000px) {
+  main { max-width: 1080px; }
+  .kpis, .cifras { grid-template-columns: repeat(4, 1fr); }
+  #hoja .panel { max-width: 860px; }
+}
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
