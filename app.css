@@ -497,7 +497,10 @@ html[data-dir="atras"]::view-transition-new(vista) { animation-name: vt-entrar-a
 .mapa .burbujas circle { fill: url(#burbuja); stroke: color-mix(in srgb, var(--s1) 55%, #fff); stroke-opacity: .85; stroke-width: 1.2; vector-effect: non-scaling-stroke; transition: r .45s cubic-bezier(.2,.8,.2,1), opacity .2s; }
 .mapa .burbujas .centro { fill: #fff; stroke: none; opacity: .9; }
 .mapa .burbujas g.si circle:first-child { stroke: var(--tinta); stroke-width: 2.5; stroke-opacity: 1; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--s1) 70%, transparent)); }
-.mapa .nombres text { fill: var(--tinta); font-weight: 650; paint-order: stroke; stroke: color-mix(in srgb, var(--sup2) 85%, transparent); stroke-width: 3.5px; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; letter-spacing: -.01em; }
+.mapa .nombres text { fill: var(--tinta); font-weight: 600; paint-order: stroke; stroke: color-mix(in srgb, var(--sup2) 88%, transparent); stroke-width: 2.6px; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; letter-spacing: 0; transform-box: fill-box; transform-origin: center; }
+/* cada nombre que aparece sube y se aclara; el retraso negativo lo pone app.js para no reiniciarla al redibujar */
+.mapa .nombres text.nuevo { animation: nombreEntra .6s cubic-bezier(.2,.8,.2,1) both; }
+@keyframes nombreEntra { from { opacity: 0; transform: translateY(45%) scale(.85); } }
 .mapa-mes { position: absolute; left: 14px; top: 12px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; text-transform: capitalize; color: var(--tinta); text-shadow: 0 2px 12px var(--fondo); pointer-events: none; }
 .linea-tiempo { margin-top: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; }
 .linea-tiempo .redondo { width: 42px; height: 42px; background: var(--azul); color: #fff; border-color: transparent; box-shadow: 0 8px 20px -10px var(--azul); }

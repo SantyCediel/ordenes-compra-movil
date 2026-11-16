@@ -861,15 +861,29 @@ async function pintarMapa(sel, R) {
   const radio = p => vb.w * (0.011 + 0.05 * Math.sqrt(p.v / escala()));
 
   // nombres sin encimarse: se prueba arriba, abajo, a la derecha y a la izquierda; si no cabe, no se pone
+  // La letra tiene un tamaño fijo EN PANTALLA (no una fracción del mapa, que en la tarjeta ancha del computador
+  // daba ~25 px): los 3 primeros un poco más grandes, el resto pequeño; en «Presentar» algo mayor.
+  // Cada nombre que aparece entra animado; `vistos` guarda cuándo empezó, para que al arrastrar o acercar
+  // (que vuelve a dibujar todo) la animación siga donde iba en vez de reiniciarse.
+  const vistos = new Map();
   function nombres(pts) {
-    const fs = vb.w * 0.029, alto = fs * 1.15, ocupado = [];
-    const choca = r => ocupado.some(o => r.x < o.x + o.w && r.x + r.w > o.x && r.y < o.y + o.h && r.y + r.h > o.y);
+    const pxPorUnidad = (svg.getBoundingClientRect().width || ancho) / vb.w;
+    const grande = svg.closest(".pr-cuerpo") ? 1.3 : 1;
+    const ocupado = [], ahora = performance.now();
     const dentro = r => r.x >= vb.x && r.y >= vb.y && r.x + r.w <= vb.x + vb.w && r.y + r.h <= vb.y + vb.h;
     for (const p of pts) { const r = radio(p) * 0.55; ocupado.push({ x: p.x - r, y: p.y - r, w: 2 * r, h: 2 * r, propio: p.cod }); } // el centro de cada círculo
-    const salida = [];
-    for (const p of pts) {
-      if (salida.length >= 14) break;
-      const t = nombreMuni(p.cod), an = anchoTexto(t, fs) + fs * 0.3, r = radio(p), sep = fs * 0.25;
+    // lo que flota encima del mapa (leyenda, botones, mes): ningún nombre debajo
+    const marco = svg.getBoundingClientRect();
+    for (const el of caja.querySelectorAll(".mapa-leyenda, .mapa-botones, .mapa-mes:not([hidden])")) {
+      const b = el.getBoundingClientRect(); if (!b.width || !marco.width) continue;
+      ocupado.push({ x: vb.x + (b.left - marco.left - 4) / pxPorUnidad, y: vb.y + (b.top - marco.top - 4) / pxPorUnidad, w: (b.width + 8) / pxPorUnidad, h: (b.height + 8) / pxPorUnidad });
+    }
+    const salida = [], puestos = new Set();
+    let nuevos = 0;
+    for (const [i, p] of pts.entries()) {
+      if (salida.length >= 22) break;
+      const fs = (i < 3 ? 12 : 10.5) * grande / pxPorUnidad, alto = fs * 1.15;
+      const t = nombreMuni(p.cod), an = anchoTexto(t, fs) + fs * 0.3, r = radio(p), sep = fs * 0.3;
       const opciones = [
         { x: p.x - an / 2, y: p.y - r - sep - alto, tx: p.x, ty: p.y - r - sep - fs * 0.22, a: "middle" },
         { x: p.x - an / 2, y: p.y + r + sep, tx: p.x, ty: p.y + r + sep + fs * 0.9, a: "middle" },
@@ -880,9 +894,13 @@ async function pintarMapa(sel, R) {
         const caja = { x: o.x, y: o.y, w: an, h: alto };
         const otros = ocupado.filter(x => x.propio !== p.cod);
         if (!dentro(caja) || otros.some(x => caja.x < x.x + x.w && caja.x + caja.w > x.x && caja.y < x.y + x.h && caja.y + caja.h > x.y)) continue;
-        ocupado.push(caja); salida.push(`<text x="${o.tx}" y="${o.ty}" font-size="${fs}" text-anchor="${o.a}">${esc(t)}</text>`); break;
+        ocupado.push(caja); puestos.add(p.cod);
+        if (!vistos.has(p.cod)) vistos.set(p.cod, ahora + 40 * nuevos++); // los nuevos, escalonados
+        const edad = ahora - vistos.get(p.cod), anima = edad < 650 ? ` class="nuevo" style="animation-delay:${Math.round(-edad)}ms"` : "";
+        salida.push(`<text x="${o.tx}" y="${o.ty}" font-size="${fs}" text-anchor="${o.a}"${anima}>${esc(t)}</text>`); break;
       }
     }
+    for (const cod of vistos.keys()) if (!puestos.has(cod)) vistos.delete(cod); // si vuelve a salir, entra animado otra vez
     return salida.join("");
   }
 
