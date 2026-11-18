@@ -1531,7 +1531,14 @@ async function arrancar() {
     <div class="cifras">${'<div class="esq" style="height:128px"></div>'.repeat(4)}</div>
     <div class="esq" style="height:170px;margin-top:10px"></div></div>`;
 
-  if (DEMO || LOCAL) { await sincronizar(); alCambiar(); return; }
+  if (DEMO || LOCAL) {
+    // la vista de la dirección desde el primer dibujo: sincronizar() dibuja apenas llegan los datos y, con «inicio» por
+    // defecto, el mapa del Inicio del computador mostraba primero el inicio de la app (y se quedaba ahí si la
+    // transición a #/mapa no terminaba, p. ej. con la vista fuera de pantalla)
+    const p0 = location.hash.replace(/^#\/?/, "").split("/")[0];
+    if (VISTAS[p0]) actual = p0;
+    await sincronizar(); alCambiar(); return;
+  }
   if (!C.clientId) {
     vista.innerHTML = `<div class="vacio entra"><div class="ilus">${ICO.alerta}</div><b>Falta configurar la aplicación</b>Hay que poner el «Id. de aplicación» de Microsoft Entra en config.js.</div>`;
     return;
