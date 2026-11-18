@@ -464,18 +464,31 @@ html[data-dir="atras"]::view-transition-new(vista) { animation-name: vt-entrar-a
 }
 
 /* ---------- v5: mapa de entregas ---------- */
-.mapa-caja { position: relative; overflow: hidden; padding: 0; }
+:root { --mb: #3b82f6; --mb2: #7dd3fc; } /* tema del mapa; app.js lo cambia (ponerTemaMapa) */
+.mapa-caja { position: relative; overflow: hidden; padding: 0;
+  background-image: radial-gradient(110% 80% at 50% 0%, color-mix(in srgb, var(--mb) 12%, transparent), transparent 62%),
+                    radial-gradient(70% 60% at 100% 100%, color-mix(in srgb, var(--mb2) 8%, transparent), transparent 70%); }
 .mapa { display: block; width: 100%; touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none; }
 .mapa:active { cursor: grabbing; }
-.mapa .deptos path { fill: var(--sup2); stroke: color-mix(in srgb, var(--tinta3) 50%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; stroke-linejoin: round; }
+.mapa .rejilla { pointer-events: none; }
+.mapa pattern circle { fill: var(--tinta3); opacity: .22; }
+.mapa .deptos path { fill: var(--sup2); stroke: color-mix(in srgb, var(--tinta3) 70%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; stroke-linejoin: round;
+  animation: deptoEntra .8s cubic-bezier(.2,.8,.2,1) both; animation-delay: calc(var(--i, 0) * 16ms); }
+.mapa .deptos path:hover { stroke: var(--mb2); stroke-width: 1.6; }
+@keyframes deptoEntra { from { opacity: 0; } }
 
 
 
 .mapa-botones { position: absolute; right: 10px; top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .mapa-botones .redondo { width: 36px; height: 36px; font-size: 20px; font-weight: 600; line-height: 1; background: var(--sup); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
 .mapa-botones .redondo svg { width: 18px; height: 18px; }
-.mapa-leyenda { position: absolute; left: 12px; bottom: 10px; display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--tinta2); background: var(--sup); padding: 5px 10px 5px 7px; border-radius: 999px; border: 1px solid var(--borde); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); pointer-events: none; }
-.mapa-leyenda i { display: block; width: 14px; height: 14px; border-radius: 50%; background: var(--s1); opacity: .7; box-shadow: 6px 0 0 -3px var(--s1); }
+/* temas del mapa: muestras de color abajo a la izquierda */
+.mapa-temas { position: absolute; left: 12px; bottom: 10px; display: flex; gap: 6px; padding: 5px 7px; border-radius: 999px; background: var(--sup); border: 1px solid var(--borde); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.mapa-temas button { width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 2px solid transparent; background: radial-gradient(circle at 35% 30%, var(--b), var(--a) 70%); cursor: pointer; transition: transform .2s cubic-bezier(.34,1.56,.64,1), box-shadow .2s; }
+.mapa-temas button:hover { transform: scale(1.15); }
+.mapa-temas button.si { border-color: var(--tinta); box-shadow: 0 0 0 2px var(--sup), 0 0 12px var(--a); }
+.mapa-aviso { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); font-size: 12.5px; color: #fff; background: rgba(0,0,0,.72); padding: 6px 12px; border-radius: 999px; pointer-events: none; animation: avisoEntra .25s ease both; }
+@keyframes avisoEntra { from { opacity: 0; transform: translate(-50%, -6px); } }
 .mapa-sel { margin-top: 10px; padding: 14px 16px; }
 .ms-tope { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .ms-tope b { display: block; font-size: 19px; letter-spacing: -.02em; } .ms-tope small { color: var(--tinta3); font-size: 12.5px; }
@@ -488,20 +501,29 @@ html[data-dir="atras"]::view-transition-new(vista) { animation-name: vt-entrar-a
 .ms-clientes i { width: 6px; height: 6px; border-radius: 50%; background: var(--tinta3); }
 .boton.ancho { width: 100%; justify-content: center; margin-top: 12px; }
 .rank .dep { color: var(--tinta3); font-weight: 500; font-size: 12px; }
-.enlace-lugares { margin-top: 10px; border-radius: 16px; border: 1px solid var(--borde); font-size: 13.5px; }
+.enlace-lugares { margin-top: 10px; border-radius: 16px; border: 1px solid var(--borde); font-size: 13.5px; background: var(--sup); }
 .nota-dato { display: block; color: var(--tinta3); font-weight: 500; font-size: 11.5px; }
 .dato b a { color: var(--azul); text-decoration: none; }
 
 .mapa .deptos path { transition: fill .5s; }
-.mapa .burbujas g { cursor: pointer; }
-.mapa .burbujas circle { fill: url(#burbuja); stroke: color-mix(in srgb, var(--s1) 55%, #fff); stroke-opacity: .85; stroke-width: 1.2; vector-effect: non-scaling-stroke; transition: r .45s cubic-bezier(.2,.8,.2,1), opacity .2s; }
-.mapa .burbujas .centro { fill: #fff; stroke: none; opacity: .9; }
-.mapa .burbujas g.si circle:first-child { stroke: var(--tinta); stroke-width: 2.5; stroke-opacity: 1; filter: drop-shadow(0 0 6px color-mix(in srgb, var(--s1) 70%, transparent)); }
+/* círculos: brotan al aparecer, crecen al pasar el ratón y los 3 mayores laten (retrasos negativos en app.js) */
+.mapa .burbujas g { cursor: pointer; transform-box: fill-box; transform-origin: center; }
+.mapa .burbujas g.nuevo { animation: bolaEntra .75s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes bolaEntra { from { transform: scale(0); opacity: 0; } }
+.mapa .burbujas .bola { fill: url(#burbuja); stroke: color-mix(in srgb, var(--mb2) 70%, #fff); stroke-opacity: .9; stroke-width: 1; vector-effect: non-scaling-stroke;
+  filter: drop-shadow(0 0 4px color-mix(in srgb, var(--mb) 60%, transparent)); transform-box: fill-box; transform-origin: center; transition: transform .25s cubic-bezier(.34,1.56,.64,1); }
+.mapa .burbujas g:hover .bola { transform: scale(1.22); }
+.mapa .burbujas .centro { fill: #fff; stroke: none; opacity: .95; pointer-events: none; }
+.mapa .burbujas .pulso { fill: none; stroke: var(--mb2); stroke-width: 1.5; vector-effect: non-scaling-stroke; pointer-events: none; transform-box: fill-box; transform-origin: center; animation: pulso 2.6s cubic-bezier(.2,.6,.3,1) infinite; }
+@keyframes pulso { from { transform: scale(1); opacity: .85; } to { transform: scale(2.6); opacity: 0; } }
+.mapa .burbujas g.si .bola { stroke: var(--tinta); stroke-width: 2.2; stroke-opacity: 1; filter: drop-shadow(0 0 8px var(--mb)); }
 .mapa .nombres text { fill: var(--tinta); font-weight: 600; paint-order: stroke; stroke: color-mix(in srgb, var(--sup2) 88%, transparent); stroke-width: 2.6px; stroke-linejoin: round; vector-effect: non-scaling-stroke; pointer-events: none; letter-spacing: 0; transform-box: fill-box; transform-origin: center; }
 /* cada nombre que aparece sube y se aclara; el retraso negativo lo pone app.js para no reiniciarla al redibujar */
+.mapa .nombres text.menor { fill: var(--tinta2); font-weight: 550; }
 .mapa .nombres text.nuevo { animation: nombreEntra .6s cubic-bezier(.2,.8,.2,1) both; }
 @keyframes nombreEntra { from { opacity: 0; transform: translateY(45%) scale(.85); } }
-.mapa-mes { position: absolute; left: 14px; top: 12px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; text-transform: capitalize; color: var(--tinta); text-shadow: 0 2px 12px var(--fondo); pointer-events: none; }
+.mapa-mes { position: absolute; left: 14px; top: 12px; font-size: 22px; font-weight: 800; letter-spacing: -.03em; color: var(--tinta); text-shadow: 0 2px 12px var(--fondo); pointer-events: none; }
+.mapa-mes::first-letter { text-transform: uppercase; }
 .linea-tiempo { margin-top: 10px; padding: 10px 14px; display: flex; align-items: center; gap: 12px; }
 .linea-tiempo .redondo { width: 42px; height: 42px; background: var(--azul); color: #fff; border-color: transparent; box-shadow: 0 8px 20px -10px var(--azul); }
 .linea-tiempo .redondo svg { width: 18px; height: 18px; }
@@ -617,9 +639,34 @@ html.presentando main { max-width: 1280px; padding: 0 clamp(16px, 4vw, 56px) 32p
 html.incrustado, html.incrustado body { background: transparent; min-height: 0; overscroll-behavior: none; }
 html.incrustado #barra, html.incrustado #pestanas, html.incrustado #fondo, html.incrustado #jalar { display: none; }
 html.incrustado main { max-width: none; padding: 0; }
-.mapa-solo { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 12px; align-items: start; }
-.mapa-solo .ms-der { max-height: calc(100vh - 4px); overflow-y: auto; scrollbar-width: thin; }
-.mapa-solo .ms-der #mapaSel .mapa-sel, .mapa-solo .ms-der #mapaLista { margin-top: 0; margin-bottom: 10px; }
-@media (max-width: 640px) { .mapa-solo { grid-template-columns: 1fr; } }
+html.incrustado { scrollbar-width: none; } html.incrustado::-webkit-scrollbar { display: none; }
+/* arriba el mapa a todo el ancho; abajo resumen + detalle (izquierda) y la lista en dos columnas (derecha) */
+.mapa-solo .ms-abajo { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); gap: 12px; align-items: start; margin-top: 10px; }
+.mapa-solo .ms-abajo .ms-resumen, .mapa-solo .ms-abajo #mapaLista { margin-top: 0; }
+.mapa-solo .ms-abajo .mr-cifras { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 14px; }
+.mapa-solo .ms-abajo .mr-cifras div:nth-child(3) { border-left: 0; padding-left: 0; }
+.mapa-solo #mapaLista { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.mapa-solo #mapaLista .rank + .rank { border-top: 0; }
+.mapa-solo #mapaLista .rank { border-bottom: 1px solid var(--borde); }
+.mapa-solo #mapaLista .rank.resto, .mapa-solo #mapaLista .vacio { grid-column: 1 / -1; border-bottom: 0; }
+@media (max-width: 760px) { .mapa-solo .ms-abajo { grid-template-columns: 1fr; } }
 .h2-nota { font-size: 13px; font-weight: 500; color: var(--tinta3); margin-left: 6px; letter-spacing: 0; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+/* resumen debajo del mapa (cifras del periodo o del mes y la leyenda) */
+.ms-resumen { margin-top: 10px; padding: 14px 16px; }
+.mr-cifras { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.mr-cifras div { min-width: 0; } .mr-cifras div + div { border-left: 1px solid var(--borde); padding-left: 12px; }
+.mr-cifras b { display: block; font-size: 18px; letter-spacing: -.02em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; animation: subirCifra .5s cubic-bezier(.2,.8,.2,1) both; }
+.mr-cifras div:nth-child(2) b { animation-delay: .05s; } .mr-cifras div:nth-child(3) b { animation-delay: .1s; } .mr-cifras div:nth-child(4) b { animation-delay: .15s; }
+.mr-cifras small { color: var(--tinta3); font-size: 11.5px; }
+@keyframes subirCifra { from { opacity: 0; transform: translateY(6px); } }
+.mr-leyenda { display: flex; align-items: center; gap: 10px; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--borde); font-size: 12px; color: var(--tinta2); }
+.mr-bolas { display: inline-flex; align-items: flex-end; gap: 4px; flex: none; }
+.mr-bolas i { width: var(--t); height: var(--t); border-radius: 50%; background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--mb2) 55%, #fff), var(--mb)); box-shadow: 0 0 6px color-mix(in srgb, var(--mb) 50%, transparent); }
+#mapaLista .rank .r2 i { background: linear-gradient(90deg, var(--mb), var(--mb2)); }
+@media (max-width: 520px) { .mr-cifras { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 12px; } .mr-cifras div:nth-child(3) { border-left: 0; padding-left: 0; } }
+/* la línea de tiempo del mapa toma el color del tema */
+.linea-tiempo .redondo:not(.activo) { background: linear-gradient(135deg, var(--mb), color-mix(in srgb, var(--mb2) 60%, var(--mb))); box-shadow: 0 8px 20px -10px var(--mb); }
+.linea-tiempo .t-centro input[type=range] { background: linear-gradient(90deg, var(--mb), var(--mb2) var(--p, 0%), var(--sup2) var(--p, 0%)); }
+.linea-tiempo .t-centro input[type=range]::-webkit-slider-thumb { border-color: var(--mb); }

@@ -801,9 +801,18 @@ const deptoMuni = cod => { const m = cod && UBIC?.municipio(cod); return m ? tit
 const medidor = document.createElement("canvas").getContext("2d");
 const anchoTexto = (t, fs) => { medidor.font = "650 100px Inter, system-ui, sans-serif"; return medidor.measureText(t).width / 100 * fs; };
 
+// temas del mapa: color de las burbujas (--mb) y de su brillo (--mb2); se recuerda en este equipo
+const TEMAS_MAPA = {
+  azul: ["Azul", "#3b82f6", "#7dd3fc"], aurora: ["Aurora", "#14b8a6", "#a78bfa"], atardecer: ["Atardecer", "#f97316", "#facc15"],
+  esmeralda: ["Esmeralda", "#10b981", "#bef264"], neon: ["Neón", "#d946ef", "#38bdf8"],
+};
+const temaMapa = () => (TEMAS_MAPA[pref("mapaTema")] ? pref("mapaTema") : "azul");
+function ponerTemaMapa(k) { const t = TEMAS_MAPA[k] || TEMAS_MAPA.azul, s = document.documentElement.style; s.setProperty("--mb", t[1]); s.setProperty("--mb2", t[2]); }
+
 function tarjetaMapa() {
   return `<div class="tarjeta mapa-caja" id="mapaCaja"><div class="esq" style="height:380px"></div></div>
     <div class="tarjeta linea-tiempo" id="mapaTiempo" hidden></div>
+    <div class="tarjeta ms-resumen" id="mapaResumen" hidden></div>
     <div id="mapaSel"></div><div class="tarjeta bloque" id="mapaLista" style="margin-top:10px"></div>
     <a class="ver-mas tarjeta enlace-lugares" id="enlaceLugares" href="#/lugares" hidden></a>`;
 }
@@ -833,9 +842,12 @@ async function pintarMapa(sel, R) {
   const porMes = new Map(meses.map(m => [m, porMunicipio(sel.filter(o => (o.f || "").startsWith(m)))]));
   const maxMes = Math.max(1, ...[...porMes.values()].flatMap(l => l.map(g => g.v)));
   let mes = null, elegido = null;
+  ponerTemaMapa(temaMapa());
 
-  // encuadre: todos los puntos del periodo con margen y la proporción de la caja
-  const ancho = caja.clientWidth || 360, alto = INCRUSTADO ? Math.max(300, Math.min(420, window.innerHeight - 96)) : Math.round(Math.min(480, Math.max(320, ancho * 1.08)));
+  // encuadre: todos los puntos del periodo con margen y la proporción de la caja.
+  // Incrustado (Inicio del computador) el alto sale del ancho, no de la ventana: la ventana se ajusta a la página
+  // (avisarAlto), así que depender de ella sería un círculo.
+  const ancho = caja.clientWidth || 360, alto = INCRUSTADO ? Math.round(Math.max(500, Math.min(760, ancho * 0.72))) : Math.round(Math.min(480, Math.max(320, ancho * 1.08)));
   let x0 = Math.min(...todos.map(p => p.x)), x1 = Math.max(...todos.map(p => p.x)), y0 = Math.min(...todos.map(p => p.y)), y1 = Math.max(...todos.map(p => p.y));
   const margen = 80; x0 -= margen; x1 += margen; y0 -= margen; y1 += margen;
   let w = Math.max(260, x1 - x0), h = Math.max(260, y1 - y0);
@@ -845,20 +857,30 @@ async function pintarMapa(sel, R) {
   const nd = s => normal(s).replace(/[^a-z0-9]+/g, " ").trim();
   const deptoDe = new Map(MAPA.deptos.map((d, i) => [nd(d.n), i]));
   caja.innerHTML = `<svg class="mapa" viewBox="${vb.x} ${vb.y} ${vb.w} ${vb.h}" style="height:${alto}px" role="img" aria-label="Mapa de Colombia con lo comprado por municipio">
-      <defs><radialGradient id="burbuja" cx="38%" cy="32%" r="70%">
-        <stop offset="0" style="stop-color:color-mix(in srgb, var(--s1) 45%, #fff);stop-opacity:.95"/>
-        <stop offset="1" style="stop-color:var(--s1);stop-opacity:.62"/></radialGradient></defs>
-      <g class="deptos">${MAPA.deptos.map((d, i) => `<path data-d="${i}" d="${d.d}"><title>${esc(d.n)}</title></path>`).join("")}</g>
+      <defs><radialGradient id="burbuja" cx="35%" cy="30%" r="75%">
+        <stop offset="0" style="stop-color:color-mix(in srgb, var(--mb2) 55%, #fff);stop-opacity:.95"/>
+        <stop offset=".55" style="stop-color:var(--mb);stop-opacity:.8"/>
+        <stop offset="1" style="stop-color:var(--mb);stop-opacity:.5"/></radialGradient>
+        <pattern id="puntos" width="22" height="22" patternUnits="userSpaceOnUse"><circle cx="2" cy="2" r="1.1"/></pattern></defs>
+      <rect class="rejilla" x="-4000" y="-4000" width="9000" height="9400" fill="url(#puntos)"/>
+      <g class="deptos">${MAPA.deptos.map((d, i) => `<path data-d="${i}" d="${d.d}" style="--i:${i}"><title>${esc(d.n)}</title></path>`).join("")}</g>
       <g class="burbujas"></g><g class="nombres"></g></svg>
     <div class="mapa-mes" id="mapaMes" hidden></div>
+    <div class="mapa-aviso" id="mapaAviso" hidden>Usa Ctrl + rueda para acercar</div>
     <div class="mapa-botones"><button class="redondo" data-z="in" aria-label="Acercar">+</button><button class="redondo" data-z="out" aria-label="Alejar">−</button><button class="redondo" data-z="fit" aria-label="Encuadrar">${ICO.mapaFit}</button></div>
-    <div class="mapa-leyenda"><i></i><span>Tamaño = valor comprado</span></div>`;
+    <div class="mapa-temas" role="group" aria-label="Tema del mapa">${Object.entries(TEMAS_MAPA).map(([k, t]) => `<button data-tema-mapa="${k}" class="${k === temaMapa() ? "si" : ""}" style="--a:${t[1]};--b:${t[2]}" title="Tema ${t[0]}" aria-label="Tema ${t[0]}"></button>`).join("")}</div>`;
   const svg = caja.querySelector("svg"), gB = svg.querySelector(".burbujas"), gN = svg.querySelector(".nombres");
   const caminos = [...svg.querySelectorAll(".deptos path")];
 
   const actuales = () => (mes ? porMes.get(mes) : todos);
   const escala = () => (mes ? maxMes : todos[0].v || 1);
-  const radio = p => vb.w * (0.011 + 0.05 * Math.sqrt(p.v / escala()));
+  // Los círculos tienen un tamaño fijo EN PANTALLA (como en un mapa de calle): antes eran una fracción del mapa y en la
+  // tarjeta ancha del computador tapaban el país. Al acercar se separan en vez de crecer.
+  const grande = () => (svg.closest(".pr-cuerpo") ? 1.3 : 1);
+  const rMax = Math.min(18, Math.max(11, ancho / 50));
+  let upx = 1; // unidades del mapa por píxel de pantalla; se recalcula en cada dibujo
+  const medir = () => { upx = vb.w / (svg.getBoundingClientRect().width || ancho); };
+  const radio = p => (2.5 + (rMax - 2.5) * Math.sqrt(p.v / escala())) * grande() * upx;
 
   // nombres sin encimarse: se prueba arriba, abajo, a la derecha y a la izquierda; si no cabe, no se pone
   // La letra tiene un tamaño fijo EN PANTALLA (no una fracción del mapa, que en la tarjeta ancha del computador
@@ -867,22 +889,21 @@ async function pintarMapa(sel, R) {
   // (que vuelve a dibujar todo) la animación siga donde iba en vez de reiniciarse.
   const vistos = new Map();
   function nombres(pts) {
-    const pxPorUnidad = (svg.getBoundingClientRect().width || ancho) / vb.w;
-    const grande = svg.closest(".pr-cuerpo") ? 1.3 : 1;
+    const pxPorUnidad = 1 / upx;
     const ocupado = [], ahora = performance.now();
     const dentro = r => r.x >= vb.x && r.y >= vb.y && r.x + r.w <= vb.x + vb.w && r.y + r.h <= vb.y + vb.h;
     for (const p of pts) { const r = radio(p) * 0.55; ocupado.push({ x: p.x - r, y: p.y - r, w: 2 * r, h: 2 * r, propio: p.cod }); } // el centro de cada círculo
     // lo que flota encima del mapa (leyenda, botones, mes): ningún nombre debajo
     const marco = svg.getBoundingClientRect();
-    for (const el of caja.querySelectorAll(".mapa-leyenda, .mapa-botones, .mapa-mes:not([hidden])")) {
+    for (const el of caja.querySelectorAll(".mapa-temas, .mapa-botones, .mapa-mes:not([hidden])")) {
       const b = el.getBoundingClientRect(); if (!b.width || !marco.width) continue;
       ocupado.push({ x: vb.x + (b.left - marco.left - 4) / pxPorUnidad, y: vb.y + (b.top - marco.top - 4) / pxPorUnidad, w: (b.width + 8) / pxPorUnidad, h: (b.height + 8) / pxPorUnidad });
     }
     const salida = [], puestos = new Set();
     let nuevos = 0;
     for (const [i, p] of pts.entries()) {
-      if (salida.length >= 22) break;
-      const fs = (i < 3 ? 12 : 10.5) * grande / pxPorUnidad, alto = fs * 1.15;
+      if (salida.length >= 16) break;
+      const fs = (i < 3 ? 11.5 : 9.5) * grande() / pxPorUnidad, alto = fs * 1.15;
       const t = nombreMuni(p.cod), an = anchoTexto(t, fs) + fs * 0.3, r = radio(p), sep = fs * 0.3;
       const opciones = [
         { x: p.x - an / 2, y: p.y - r - sep - alto, tx: p.x, ty: p.y - r - sep - fs * 0.22, a: "middle" },
@@ -896,7 +917,8 @@ async function pintarMapa(sel, R) {
         if (!dentro(caja) || otros.some(x => caja.x < x.x + x.w && caja.x + caja.w > x.x && caja.y < x.y + x.h && caja.y + caja.h > x.y)) continue;
         ocupado.push(caja); puestos.add(p.cod);
         if (!vistos.has(p.cod)) vistos.set(p.cod, ahora + 40 * nuevos++); // los nuevos, escalonados
-        const edad = ahora - vistos.get(p.cod), anima = edad < 650 ? ` class="nuevo" style="animation-delay:${Math.round(-edad)}ms"` : "";
+        const edad = ahora - vistos.get(p.cod), clase = [i >= 3 && "menor", edad < 650 && "nuevo"].filter(Boolean).join(" ");
+        const anima = (clase ? ` class="${clase}"` : "") + (edad < 650 ? ` style="animation-delay:${Math.round(-edad)}ms"` : "");
         salida.push(`<text x="${o.tx}" y="${o.ty}" font-size="${fs}" text-anchor="${o.a}"${anima}>${esc(t)}</text>`); break;
       }
     }
@@ -904,13 +926,27 @@ async function pintarMapa(sel, R) {
     return salida.join("");
   }
 
+  // cada círculo que aparece «brota» (escalonado); los 3 mayores laten con una onda. Igual que los nombres, el retraso
+  // negativo hace que arrastrar o acercar (que vuelve a dibujar) no reinicie las animaciones.
+  const vistosB = new Map();
   const dibujar = () => {
-    const pts = actuales(), total = new Map();
+    medir();
+    const pts = actuales(), total = new Map(), ahora = performance.now();
     for (const p of pts) { const k = deptoDe.get(nd(p.dpto)); if (k != null) total.set(k, (total.get(k) || 0) + p.v); }
     const maxD = Math.max(1, ...total.values());
-    caminos.forEach((c, i) => { const v = total.get(i); c.style.fill = v ? `color-mix(in srgb, var(--s1) ${Math.round(5 + 15 * Math.sqrt(v / maxD))}%, var(--sup2))` : ""; });
+    caminos.forEach((c, i) => { const v = total.get(i); c.style.fill = v ? `color-mix(in srgb, var(--mb) ${Math.round(8 + 30 * Math.sqrt(v / maxD))}%, var(--sup2))` : ""; });
     // primero los grandes, para que los pequeños queden encima y se puedan tocar
-    gB.innerHTML = [...pts].sort((a, b) => b.v - a.v).map(p => `<g data-cod="${p.cod}" class="${p.cod === elegido ? "si" : ""}"><circle cx="${p.x}" cy="${p.y}" r="${radio(p)}"/><circle class="centro" cx="${p.x}" cy="${p.y}" r="${vb.w * 0.0045}"/><title>${esc(nombreMuni(p.cod))}: ${esc(corto(p.v))}</title></g>`).join("");
+    let nuevos = 0;
+    const orden = [...pts].sort((a, b) => b.v - a.v);
+    gB.innerHTML = orden.map((p, i) => {
+      if (!vistosB.has(p.cod)) vistosB.set(p.cod, ahora + 28 * nuevos++);
+      const edad = ahora - vistosB.get(p.cod), r = radio(p);
+      const brota = edad < 750 ? ` style="animation-delay:${Math.round(-edad)}ms"` : "";
+      const onda = i < 3 ? `<circle class="pulso" cx="${p.x}" cy="${p.y}" r="${r}" style="animation-delay:${-Math.round((ahora + i * 860) % 2600)}ms"/>` : "";
+      return `<g data-cod="${p.cod}" class="${[p.cod === elegido && "si", edad < 750 && "nuevo"].filter(Boolean).join(" ")}"${brota}>${onda}<circle class="bola" cx="${p.x}" cy="${p.y}" r="${r}"/><circle class="centro" cx="${p.x}" cy="${p.y}" r="${1.6 * upx}"/><title>${esc(nombreMuni(p.cod))}: ${esc(corto(p.v))}</title></g>`;
+    }).join("");
+    const hay = new Set(orden.map(p => p.cod));
+    for (const cod of vistosB.keys()) if (!hay.has(cod)) vistosB.delete(cod);
     gN.innerHTML = nombres(pts);
   };
   const aplicar = () => { svg.setAttribute("viewBox", `${vb.x} ${vb.y} ${vb.w} ${vb.h}`); dibujar(); };
@@ -959,12 +995,42 @@ async function pintarMapa(sel, R) {
     punteros.delete(e.pointerId);
   });
   svg.addEventListener("pointercancel", e => punteros.delete(e.pointerId));
-  svg.addEventListener("wheel", e => { e.preventDefault(); zoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, ...enUnidades(e.clientX, e.clientY)); }, { passive: false });
+  // En el Inicio del computador el mapa es grande: la rueda sola desplaza la página (si no, quedaría atrapada en el
+  // mapa) y Ctrl + rueda acerca, como en los mapas de la web. En el celular y en Análisis, la rueda acerca.
+  let avisoReloj = null;
+  svg.addEventListener("wheel", e => {
+    if (INCRUSTADO && !e.ctrlKey) {
+      const av = $("#mapaAviso"); if (av) { av.hidden = false; clearTimeout(avisoReloj); avisoReloj = setTimeout(() => { av.hidden = true; }, 1400); }
+      return; // la página lo pasa al escritorio (avisarAlto)
+    }
+    e.preventDefault(); e.stopPropagation(); zoom(e.deltaY > 0 ? 1.18 : 1 / 1.18, ...enUnidades(e.clientX, e.clientY));
+  }, { passive: false });
   svg.addEventListener("dblclick", e => zoom(0.6, ...enUnidades(e.clientX, e.clientY)));
   caja.querySelectorAll("[data-z]").forEach(b => b.onclick = () => {
     if (b.dataset.z === "fit") Object.assign(vb, inicial), aplicar();
     else zoom(b.dataset.z === "in" ? 0.7 : 1 / 0.7, vb.x + vb.w / 2, vb.y + vb.h / 2);
   });
+  // cambiar de tema: los círculos vuelven a brotar con el color nuevo
+  caja.querySelectorAll("[data-tema-mapa]").forEach(b => b.onclick = () => {
+    const k = b.dataset.temaMapa; pref("mapaTema", k); ponerTemaMapa(k);
+    caja.querySelectorAll("[data-tema-mapa]").forEach(x => x.classList.toggle("si", x === b));
+    vistosB.clear(); dibujar(); pintarLista(); vibrar();
+  });
+
+  // resumen debajo del mapa: lo que antes había que deducir de los círculos, más la leyenda
+  const pintarResumen = () => {
+    const el = $("#mapaResumen"); if (!el) return;
+    const l = actuales(), suma = l.reduce((s, g) => s + g.v, 0), n = l.reduce((s, g) => s + g.n, 0), porDep = new Map();
+    for (const g of l) { const d = deptoMuni(g.cod); porDep.set(d, (porDep.get(d) || 0) + g.v); }
+    const [dep, vDep] = [...porDep].sort((a, b) => b[1] - a[1])[0] || ["—", 0];
+    el.hidden = false;
+    el.innerHTML = `<div class="mr-cifras">
+        <div><b>${esc(corto(suma))}</b><small>comprado${mes ? " en el mes" : " en el periodo"}</small></div>
+        <div><b>${fmtNum.format(l.length)}</b><small>${l.length === 1 ? "municipio" : "municipios"}</small></div>
+        <div><b>${fmtNum.format(n)}</b><small>${n === 1 ? "orden" : "órdenes"}</small></div>
+        <div><b title="${esc(dep)}">${esc(dep)}</b><small>departamento líder · ${Math.round(vDep / (suma || 1) * 100)}%</small></div></div>
+      <div class="mr-leyenda"><span class="mr-bolas"><i style="--t:6px"></i><i style="--t:11px"></i><i style="--t:17px"></i></span><span>Círculo = valor comprado en el municipio · color del departamento = cuánto se compró allí · toca un círculo para ver el detalle</span></div>`;
+  };
 
   // la lista: el mismo contenido del mapa, para leerlo sin tocar círculos
   const pintarLista = () => {
@@ -991,7 +1057,7 @@ async function pintarMapa(sel, R) {
       val.textContent = corto(suma);
       cartel.hidden = !mes; cartel.textContent = mes ? fmtMesLargo.format(aFecha(mes + "-01")) : "";
       rango.style.setProperty("--p", (i / meses.length * 100) + "%");
-      dibujar(); pintarLista(); if (elegido) elegir(elegido);
+      dibujar(); pintarLista(); pintarResumen(); if (elegido) elegir(elegido);
     };
     const parar = () => { clearInterval(reloj); reloj = null; btn.innerHTML = ICO.play; btn.classList.remove("activo"); };
     btn.onclick = () => {
@@ -1002,7 +1068,7 @@ async function pintarMapa(sel, R) {
     };
     rango.oninput = () => { parar(); ir(Number(rango.value)); };
     ir(0);
-  } else { tiempo.hidden = true; aplicar(); pintarLista(); }
+  } else { tiempo.hidden = true; aplicar(); pintarLista(); pintarResumen(); }
 
   const corr = sel.filter(o => o.muc === "corregido").length, est = sel.filter(o => o.muc === "cliente" || o.muc === "contrato").length;
   const enl = $("#enlaceLugares");
@@ -1310,12 +1376,27 @@ function cerrarHoja(sinAnimar) {
 }
 
 // ---------------------------------------------------------------- navegación
-// el mapa solo (12 meses), para incrustarlo: a la izquierda el mapa y su línea de tiempo; a la derecha el detalle y la lista
+// el mapa solo (12 meses), para incrustarlo: arriba el mapa a todo el ancho y su línea de tiempo;
+// abajo el resumen, el detalle del municipio elegido y la lista
 function mapa() {
   const R = rango("12m"), sel = D.ordenes.filter(o => o.f && o.f >= R.desde && o.f <= R.hasta);
-  vista.innerHTML = `<div class="mapa-solo"><div class="ms-izq"><div class="tarjeta mapa-caja" id="mapaCaja"><div class="esq" style="height:340px"></div></div><div class="tarjeta linea-tiempo" id="mapaTiempo" hidden></div></div>
-    <div class="ms-der"><div id="mapaSel"></div><div class="tarjeta bloque" id="mapaLista"></div><a class="ver-mas tarjeta enlace-lugares" id="enlaceLugares" href="#/lugares" hidden></a></div></div>`;
+  vista.innerHTML = `<div class="mapa-solo"><div class="tarjeta mapa-caja" id="mapaCaja"><div class="esq" style="height:520px"></div></div>
+    <div class="tarjeta linea-tiempo" id="mapaTiempo" hidden></div>
+    <div class="ms-abajo"><div class="ms-izq"><div class="tarjeta ms-resumen" id="mapaResumen" hidden></div><div id="mapaSel"></div><a class="ver-mas tarjeta enlace-lugares" id="enlaceLugares" href="#/lugares" hidden></a></div>
+    <div class="tarjeta bloque" id="mapaLista"></div></div></div>`;
+  avisarAlto();
   pintarMapa(sel, R);
+}
+// Incrustado, la página le dice al escritorio cuánto mide (así la tarjeta crece con el detalle y no tiene barra propia)
+// y le pasa la rueda del ratón, que WebView2 se queda y no llegaría a la página del Inicio.
+let altoObs = null;
+function avisarAlto() {
+  if (!INCRUSTADO || altoObs) return;
+  let ultimo = 0;
+  const medirAlto = () => { const px = Math.ceil(vista.getBoundingClientRect().bottom + scrollY); if (Math.abs(px - ultimo) > 2) { ultimo = px; escritorio({ tipo: "alto", px }); } };
+  if (window.ResizeObserver) { altoObs = new ResizeObserver(medirAlto); altoObs.observe(vista); } else altoObs = true;
+  addEventListener("wheel", e => { if (!e.defaultPrevented) escritorio({ tipo: "rueda", dy: e.deltaMode === 1 ? e.deltaY * 40 : e.deltaY }); });
+  medirAlto();
 }
 const VISTAS = { inicio, ordenes, tablero, seguimiento, entregas, ajustes, lugares, articulo, presentar, mapa };
 const PESTANAS = ["inicio", "ordenes", "tablero", "seguimiento", "entregas"];
